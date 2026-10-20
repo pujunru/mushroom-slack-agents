@@ -1,0 +1,43 @@
+{{ .Chart.Name }} {{ .Chart.Version }} installed as {{ .Release.Name }}.
+
+Components:
+  gateway  {{ .Values.gateway.replicaCount }} replica(s)   Slack ingest
+  agent    {{ .Values.agent.replicaCount }} replica(s)   opencode workers
+{{- if .Values.postgresql.enabled }}
+  postgres bundled (evaluation)   KV + pgmq queue
+{{- else }}
+  postgres external: {{ .Values.externalDatabase.host }}
+{{- end }}
+
+{{- if eq .Values.secrets.provider "plain" }}
+
+WARNING: secrets.provider=plain renders credentials into a Kubernetes Secret
+from your values. For anything beyond evaluation, use:
+
+    --set secrets.provider=externalSecrets
+
+so Vault remains the source of truth.
+{{- end }}
+
+1. Point your Slack app's Event Subscriptions Request URL at:
+{{- if .Values.traefik.ingressRoute.enabled }}
+     https://{{ .Values.traefik.ingressRoute.host }}{{ .Values.traefik.ingressRoute.path }}
+{{- else if .Values.ingress.enabled }}
+     https://{{ .Values.ingress.host }}{{ .Values.ingress.path }}
+{{- else }}
+     (no ingress enabled — expose the gateway Service yourself)
+{{- end }}
+
+   Slack will immediately POST a url_verification challenge; the gateway
+   answers it automatically.
+
+2. Subscribe the bot to at least `app_mention`, then invite it to a channel
+   and mention it.
+
+3. Watch it work:
+
+   kubectl -n {{ .Release.Namespace }} logs -l app.kubernetes.io/component=gateway -f
+   kubectl -n {{ .Release.Namespace }} logs -l app.kubernetes.io/component=agent -f
+
+   kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "mushroom.fullname" . }}-gateway {{ .Values.gateway.service.port }}
+   curl localhost:{{ .Values.gateway.service.port }}/stats

@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mushroom-agent"
+version = "0.1.0"
+description = "Queue-consuming agent worker that runs opencode and replies to Slack."
+requires-python = ">=3.12"
+license = { text = "MIT" }
+dependencies = [
+    "mushroom-core",
+    "slack-sdk>=3.33",
+    "prometheus-client>=0.21",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.3", "pytest-asyncio>=0.24", "ruff>=0.7"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["mushroom_agent"]

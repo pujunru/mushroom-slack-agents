@@ -1,0 +1,22 @@
+{{/*
+Headless service for the workers' metrics endpoint. Workers serve no
+application traffic, so this exists only for scraping.
+*/}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "mushroom.fullname" . }}-agent-metrics
+  labels:
+    {{- include "mushroom.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agent
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+    - port: {{ .Values.observability.metricsPort }}
+      targetPort: metrics
+      protocol: TCP
+      name: metrics
+  selector:
+    {{- include "mushroom.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: agent

@@ -1,0 +1,25 @@
+apiVersion: v2
+name: mushroom
+description: Slack event pipeline — stateless Bolt gateway, Postgres KV + pgmq queue, and opencode agent workers.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/your-org/mushroom
+sources:
+  - https://github.com/your-org/mushroom
+keywords:
+  - slack
+  - agents
+  - pgmq
+  - opencode
+maintainers:
+  - name: Mushroom contributors
+
+# Postgres is a chart dependency so `helm install` yields a working stack.
+# Disable it (postgresql.enabled=false) and point at an external database for
+# anything beyond evaluation; see values.yaml.
+dependencies:
+  - name: postgresql
+    version: "16.x.x"
+    repository: https://charts.bitnami.com/bitnami
+    condition: postgresql.enabled

@@ -1,0 +1,68 @@
+{{- if .Values.traefik.ingressRoute.enabled }}
+{{- $ir := .Values.traefik.ingressRoute }}
+{{- $full := include "mushroom.fullname" . }}
+{{/*
+Traefik fronts the gateway. Only the Slack endpoint is routed; /metrics,
+/stats and /events stay cluster-internal, reachable via the Service only.
+*/}}
+{{- if $ir.middlewares.rateLimit.enabled }}
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ $full }}-ratelimit
+  labels:
+    {{- include "mushroom.labels" . | nindent 4 }}
+spec:
+  rateLimit:
+    # Sized well above normal Slack volume; this exists to stop a retry storm
+    # from saturating Postgres, not to shape ordinary traffic.
+    average: {{ $ir.middlewares.rateLimit.average }}
+    burst: {{ $ir.middlewares.rateLimit.burst }}
+---
+{{- end }}
+{{- if $ir.middlewares.redirectHttps.enabled }}
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ $full }}-redirect-https
+  labels:
+    {{- include "mushroom.labels" . | nindent 4 }}
+spec:
+  redirectScheme:
+    # Slack requires an HTTPS request URL.
+    scheme: https
+    permanent: true
+---
+{{- end }}
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: {{ $full }}
+  labels:
+    {{- include "mushroom.labels" . | nindent 4 }}
+spec:
+  entryPoints:
+    {{- toYaml $ir.entryPoints | nindent 4 }}
+  routes:
+    - kind: Rule
+      match: Host(`{{ $ir.host }}`) && PathPrefix(`{{ $ir.path }}`)
+      services:
+        - name: {{ $full }}-gateway
+          port: {{ .Values.gateway.service.port }}
+      middlewares:
+        {{- if $ir.middlewares.rateLimit.enabled }}
+        - name: {{ $full }}-ratelimit
+        {{- end }}
+        {{- if $ir.middlewares.redirectHttps.enabled }}
+        - name: {{ $full }}-redirect-https
+        {{- end }}
+  {{- if $ir.tls.enabled }}
+  tls:
+    {{- with $ir.tls.secretName }}
+    secretName: {{ . }}
+    {{- end }}
+    {{- with $ir.tls.certResolver }}
+    certResolver: {{ . }}
+    {{- end }}
+  {{- end }}
+{{- end }}

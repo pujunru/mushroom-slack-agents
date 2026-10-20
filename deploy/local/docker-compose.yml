@@ -1,0 +1,145 @@
+# Local development stack.
+#
+# Mirrors the Kubernetes topology closely enough to be useful: Traefik in
+# front, two gateway replicas behind it, a worker, and one Postgres serving as
+# both KV store and queue. Vault is included in dev mode so the secret path
+# can be exercised, but the services read from .env by default.
+#
+#   cp .env.example .env    # then fill in Slack credentials
+#   docker compose -f deploy/local/docker-compose.yml up --build
+#
+# Expose the gateway to Slack with a tunnel, e.g.:
+#   ngrok http 8080
+# and set the Request URL to https://<tunnel>/slack/events
+
+name: mushroom
+
+services:
+  # --- load balancer -------------------------------------------------------
+  traefik:
+    image: traefik:v3.2
+    command:
+      - --api.insecure=true
+      - --api.dashboard=true
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --log.level=INFO
+      - --accesslog=true
+    ports:
+      - "8080:80"     # gateway, via Traefik
+      - "8081:8080"   # Traefik dashboard
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      gateway:
+        condition: service_started
+
+  # --- database: KV store and queue ---------------------------------------
+  postgres:
+    # Ships pgmq as an extension, so no pure-SQL preload is needed. Pinned:
+    # pgmq's own quickstart still references an older version.
+    image: ghcr.io/pgmq/pg17-pgmq:v1.13.1
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-mushroom}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mushroom}
+      POSTGRES_DB: ${POSTGRES_DB:-mushroom}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mushroom} -d ${POSTGRES_DB:-mushroom}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # --- schema --------------------------------------------------------------
+  migrate:
+    build:
+      context: ../..
+      dockerfile: images/migrate.Dockerfile
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-mushroom}:${POSTGRES_PASSWORD:-mushroom}@postgres:5432/${POSTGRES_DB:-mushroom}
+      MIGRATIONS_DIR: /app/db/migrations
+      LOG_FORMAT: console
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  # --- Slack ingest --------------------------------------------------------
+  gateway:
+    build:
+      context: ../..
+      dockerfile: images/gateway.Dockerfile
+    # Two replicas, to exercise the stateless path behind the load balancer.
+    deploy:
+      replicas: 2
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-mushroom}:${POSTGRES_PASSWORD:-mushroom}@postgres:5432/${POSTGRES_DB:-mushroom}
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-}
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
+      LOG_FORMAT: console
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      PORT: "8080"
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.gateway.rule=PathPrefix(`/slack`) || PathPrefix(`/stats`) || PathPrefix(`/healthz`) || PathPrefix(`/readyz`) || PathPrefix(`/metrics`) || PathPrefix(`/events`)
+      - traefik.http.routers.gateway.entrypoints=web
+      - traefik.http.services.gateway.loadbalancer.server.port=8080
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  # --- agent workers -------------------------------------------------------
+  agent:
+    build:
+      context: ../..
+      dockerfile: images/agent.Dockerfile
+      args:
+        OPENCODE_VERSION: ${OPENCODE_VERSION:-2.1.1}
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-mushroom}:${POSTGRES_PASSWORD:-mushroom}@postgres:5432/${POSTGRES_DB:-mushroom}
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENCODE_MODEL: ${OPENCODE_MODEL:-anthropic/claude-sonnet-5}
+      AGENT_NAME: general
+      WORKSPACE_ROOT: /workspace
+      LOG_FORMAT: console
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      JOB_TIMEOUT_SECONDS: "600"
+      VISIBILITY_TIMEOUT_SECONDS: "900"
+    volumes:
+      - agent-workspace:/workspace
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  # --- secrets -------------------------------------------------------------
+  vault:
+    # Dev mode: in-memory, unsealed, root token known. Never use this beyond
+    # local development.
+    image: hashicorp/vault:1.18
+    cap_add:
+      - IPC_LOCK
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: ${VAULT_DEV_ROOT_TOKEN:-mushroom-dev-token}
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+      VAULT_ADDR: http://127.0.0.1:8200
+    ports:
+      - "8200:8200"
+    healthcheck:
+      test: ["CMD", "vault", "status"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres-data:
+  agent-workspace:

@@ -1,0 +1,173 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff
+      - run: ruff check .
+      - run: ruff format --check .
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: |
+          pip install -e packages/mushroom-core -e services/gateway -e services/agent
+          pip install pytest pytest-asyncio httpx
+      - name: Unit tests
+        # No services needed: Postgres and opencode are faked.
+        run: pytest -q --ignore=tests/test_queue_integration.py
+
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        # Ships pgmq, so the real SQL is exercised. This job is the only
+        # thing that proves the pgmq function signatures are correct.
+        image: ghcr.io/pgmq/pg17-pgmq:v1.13.1
+        env:
+          POSTGRES_USER: mushroom
+          POSTGRES_PASSWORD: mushroom
+          POSTGRES_DB: mushroom
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mushroom -d mushroom"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: |
+          pip install -e packages/mushroom-core -e services/gateway -e services/agent
+          pip install pytest pytest-asyncio httpx
+      - name: Apply migrations
+        env:
+          DATABASE_URL: postgresql://mushroom:mushroom@localhost:5432/mushroom
+          MIGRATIONS_DIR: db/migrations
+        run: python scripts/migrate.py
+      - name: Migrations are idempotent
+        # Re-running must be a no-op; the chart's hook runs on every upgrade.
+        env:
+          DATABASE_URL: postgresql://mushroom:mushroom@localhost:5432/mushroom
+          MIGRATIONS_DIR: db/migrations
+        run: python scripts/migrate.py
+      - name: pgmq integration tests
+        env:
+          MUSHROOM_TEST_DATABASE_URL: postgresql://mushroom:mushroom@localhost:5432/mushroom
+        run: pytest tests/test_queue_integration.py -v
+
+  pgmq-pure-sql:
+    # Verifies the second install path: pgmq loaded as plain SQL into a stock
+    # Postgres, with no compiled extension available.
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: mushroom
+          POSTGRES_PASSWORD: mushroom
+          POSTGRES_DB: mushroom
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U mushroom -d mushroom"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Load pgmq as plain SQL
+        env:
+          PGPASSWORD: mushroom
+        run: |
+          curl -fsSLO https://raw.githubusercontent.com/pgmq/pgmq/v1.13.1/pgmq-extension/sql/pgmq.sql
+          psql -v ON_ERROR_STOP=1 -h localhost -p 5433 -U mushroom -d mushroom -f pgmq.sql
+          # There is no pg_extension row on this path; confirm via the schema.
+          psql -h localhost -p 5433 -U mushroom -d mushroom \
+            -c "SELECT EXISTS(SELECT 1 FROM pg_namespace WHERE nspname='pgmq') AS schema_present;" \
+            -c "SELECT EXISTS(SELECT 1 FROM pg_extension WHERE extname='pgmq') AS extension_present;"
+      - name: Install
+        run: |
+          pip install -e packages/mushroom-core
+          pip install pytest pytest-asyncio
+      - name: Migrations work on the pure-SQL path
+        env:
+          DATABASE_URL: postgresql://mushroom:mushroom@localhost:5433/mushroom
+          MIGRATIONS_DIR: db/migrations
+        run: |
+          python scripts/migrate.py
+          python scripts/migrate.py   # idempotent
+      - name: pgmq integration tests
+        env:
+          MUSHROOM_TEST_DATABASE_URL: postgresql://mushroom:mushroom@localhost:5433/mushroom
+        run: pytest tests/test_queue_integration.py -v
+
+  helm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - name: Lint
+        run: |
+          helm dependency update deploy/helm/mushroom
+          helm lint deploy/helm/mushroom
+      - name: Render with each secrets provider
+        run: |
+          helm template mushroom deploy/helm/mushroom \
+            --set secrets.provider=plain \
+            --set secrets.plain.slackSigningSecret=x \
+            --set secrets.plain.slackBotToken=y > /tmp/plain.yaml
+          helm template mushroom deploy/helm/mushroom \
+            --set secrets.provider=externalSecrets > /tmp/eso.yaml
+          helm template mushroom deploy/helm/mushroom \
+            --set keda.enabled=true \
+            --set networkPolicy.enabled=true \
+            --set observability.serviceMonitor.enabled=true \
+            --set secrets.provider=existing \
+            --set secrets.existing.name=my-secret > /tmp/full.yaml
+          wc -l /tmp/plain.yaml /tmp/eso.yaml /tmp/full.yaml
+
+  docker:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        image: [gateway, agent, migrate]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build ${{ matrix.image }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: images/${{ matrix.image }}.Dockerfile
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

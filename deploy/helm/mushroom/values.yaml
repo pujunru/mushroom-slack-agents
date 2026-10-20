@@ -1,0 +1,317 @@
+# Default values for the mushroom chart.
+#
+# The defaults bring up a self-contained, working stack: a bundled Postgres, a
+# gateway, one agent worker, and a Traefik IngressRoute. Secrets default to a
+# plain Kubernetes Secret so the chart installs with no external dependency;
+# switch `secrets.provider` to `externalSecrets` for Vault.
+
+nameOverride: ""
+fullnameOverride: ""
+
+# ---------------------------------------------------------------------------
+# Images
+# ---------------------------------------------------------------------------
+image:
+  registry: ghcr.io
+  repository: your-org/mushroom
+  # Tags are per-component so the gateway and agents can be rolled separately.
+  pullPolicy: IfNotPresent
+  tags:
+    gateway: "0.1.0"
+    agent: "0.1.0"
+    migrate: "0.1.0"
+imagePullSecrets: []
+
+# ---------------------------------------------------------------------------
+# Slack gateway — stateless, horizontally scalable
+# ---------------------------------------------------------------------------
+gateway:
+  replicaCount: 2
+  # Slack's 3-second ack budget is the reason for a PDB and a fast readiness
+  # probe: losing all replicas means Slack retries, and eventually disables
+  # the subscription.
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  service:
+    type: ClusterIP
+    port: 8080
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  # Spread replicas across nodes so one node failure cannot take the
+  # endpoint down.
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: ScheduleAnyway
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/component: gateway
+  env: {}
+
+# ---------------------------------------------------------------------------
+# Agent workers — long-lived pgmq consumers
+# ---------------------------------------------------------------------------
+agent:
+  replicaCount: 2
+  # Each worker runs one job at a time, so concurrency is replicas. A job may
+  # run for minutes, so the grace period must let an in-flight job finish.
+  terminationGracePeriodSeconds: 660
+  jobTimeoutSeconds: 600
+  # Must exceed jobTimeoutSeconds, or a slow job is redelivered while still
+  # running. The worker also heartbeats its lease.
+  visibilityTimeoutSeconds: 900
+  maxDeliveryAttempts: 5
+  model: "anthropic/claude-sonnet-5"
+  replyToSlack: true
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  # Scratch space for opencode; also its HOME, so it is required.
+  workspace:
+    sizeLimit: 2Gi
+  autoscaling:
+    # CPU is a poor signal for queue consumers — scale on queue depth with
+    # KEDA instead. See keda below.
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 80
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  env: {}
+
+# Scale workers on pgmq depth. Requires KEDA in the cluster.
+keda:
+  enabled: false
+  minReplicaCount: 0
+  maxReplicaCount: 20
+  pollingInterval: 15
+  cooldownPeriod: 300
+  # Target visible messages per worker.
+  queueDepthTarget: "5"
+
+# ---------------------------------------------------------------------------
+# Traefik — the load balancer in front of the gateway
+# ---------------------------------------------------------------------------
+traefik:
+  # IngressRoute is Traefik's own CRD. Set `ingress.enabled` instead to use a
+  # plain Ingress object with any controller.
+  ingressRoute:
+    enabled: true
+    entryPoints:
+      - websecure
+    # Slack posts to this host; it must be publicly resolvable and TLS-served.
+    host: mushroom.example.com
+    # Only the Slack endpoint is exposed. Metrics, stats and the event list
+    # stay cluster-internal.
+    path: /slack/events
+    tls:
+      enabled: true
+      # Omit to use Traefik's default certificate resolver.
+      secretName: ""
+      certResolver: ""
+    middlewares:
+      # Slack bursts during an incident; the limit protects Postgres while
+      # staying far above normal event volume.
+      rateLimit:
+        enabled: true
+        average: 100
+        burst: 200
+      # Slack requires HTTPS for its request URL.
+      redirectHttps:
+        enabled: true
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  host: mushroom.example.com
+  path: /slack/events
+  pathType: Prefix
+  tls: []
+
+# ---------------------------------------------------------------------------
+# Database
+# ---------------------------------------------------------------------------
+postgresql:
+  # Bundled Postgres for evaluation. For production, disable this and set
+  # `externalDatabase`, ideally with CloudNativePG or a managed instance.
+  enabled: true
+  auth:
+    username: mushroom
+    password: mushroom
+    database: mushroom
+  primary:
+    # pgmq must be present on the server. The Bitnami image does not ship it,
+    # so the pure-SQL install is loaded via an init script — pgmq has no C
+    # code, which is what makes that possible.
+    initdb:
+      scripts:
+        00-pgmq.sh: |
+          #!/bin/bash
+          set -euo pipefail
+          # Pinned: pgmq's own quickstart still references an older version.
+          PGMQ_VERSION="v1.13.1"
+          URL="https://raw.githubusercontent.com/pgmq/pgmq/${PGMQ_VERSION}/pgmq-extension/sql/pgmq.sql"
+          echo "Loading pgmq ${PGMQ_VERSION} (pure SQL) into ${POSTGRES_DATABASE:-mushroom}"
+          curl -fsSL "$URL" -o /tmp/pgmq.sql
+          psql -v ON_ERROR_STOP=1 \
+               --username "${POSTGRES_USER}" \
+               --dbname "${POSTGRES_DATABASE:-mushroom}" \
+               -f /tmp/pgmq.sql
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        cpu: "2"
+        memory: 2Gi
+    persistence:
+      enabled: true
+      size: 20Gi
+
+externalDatabase:
+  # Used when postgresql.enabled is false. Prefer supplying the whole DSN
+  # through Vault rather than setting it here.
+  host: ""
+  port: 5432
+  database: mushroom
+  user: mushroom
+  # Leave empty and let the secret provide DATABASE_URL.
+  existingSecret: ""
+  existingSecretKey: "database-url"
+
+# ---------------------------------------------------------------------------
+# Secrets
+# ---------------------------------------------------------------------------
+secrets:
+  # `plain`          — a Secret rendered from the values below (evaluation only).
+  # `externalSecrets`— synced from Vault by External Secrets Operator.
+  # `existing`       — a Secret you manage yourself.
+  provider: plain
+
+  # Keys expected in the resulting Secret, whichever provider creates it.
+  keys:
+    slackSigningSecret: slack-signing-secret
+    slackBotToken: slack-bot-token
+    anthropicApiKey: anthropic-api-key
+    databaseUrl: database-url
+
+  existing:
+    name: ""
+
+  plain:
+    # NEVER commit real values. Pass with --set or a values file kept out of
+    # version control, and prefer the externalSecrets provider.
+    slackSigningSecret: ""
+    slackBotToken: ""
+    anthropicApiKey: ""
+
+  externalSecrets:
+    # apiVersion external-secrets.io/v1 — v1beta1 stopped being served in
+    # ESO v0.17.0, so a v1beta1 manifest will not apply on a current install.
+    refreshInterval: 1h
+    secretStore:
+      # Reference an existing store, or let the chart create one below.
+      name: vault-backend
+      kind: ClusterSecretStore
+      create: true
+    vault:
+      server: http://vault.vault.svc.cluster.local:8200
+      # KV v2 mount and the path holding the app's secrets.
+      mountPath: secret
+      version: v2
+      path: mushroom
+      auth:
+        # Kubernetes auth: the pod's ServiceAccount token is exchanged for a
+        # Vault token, so no static credential is stored in the cluster.
+        kubernetes:
+          mountPath: kubernetes
+          role: mushroom
+          # Vault 2.x requires an audience on the Kubernetes role.
+          audience: vault
+    # Map Vault keys to Secret keys. Vault key names on the right.
+    remoteKeys:
+      slackSigningSecret: slack_signing_secret
+      slackBotToken: slack_bot_token
+      anthropicApiKey: anthropic_api_key
+      databaseUrl: database_url
+
+# ---------------------------------------------------------------------------
+# Migrations
+# ---------------------------------------------------------------------------
+migrations:
+  # Runs as a Helm pre-install/pre-upgrade hook, so schema changes land before
+  # new code starts.
+  enabled: true
+  backoffLimit: 3
+  activeDeadlineSeconds: 600
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+# ---------------------------------------------------------------------------
+# Observability
+# ---------------------------------------------------------------------------
+observability:
+  logLevel: INFO
+  logFormat: json
+  metricsPort: 9090
+  serviceMonitor:
+    # Requires the Prometheus Operator CRDs.
+    enabled: false
+    interval: 30s
+    labels: {}
+
+# ---------------------------------------------------------------------------
+# Security defaults applied to every pod
+# ---------------------------------------------------------------------------
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+networkPolicy:
+  # Default-deny with explicit allows. Off by default since it requires a CNI
+  # that enforces NetworkPolicy.
+  enabled: false

@@ -1,0 +1,54 @@
+{{- if .Values.migrations.enabled }}
+{{/*
+Schema migrations run as a Helm hook before the app starts, so new code never
+meets an old schema. The runner advisory-locks the whole migration set, so
+running it repeatedly or concurrently is safe.
+*/}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "mushroom.fullname" . }}-migrate-{{ .Release.Revision }}
+  labels:
+    {{- include "mushroom.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    # Keep the failed job around for inspection; delete it on success.
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.migrations.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.migrations.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        {{- include "mushroom.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: migrate
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ include "mushroom.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: migrate
+          image: {{ include "mushroom.image" (dict "root" . "component" "migrate") }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          env:
+            {{- include "mushroom.commonEnv" . | nindent 12 }}
+            - name: MIGRATIONS_DIR
+              value: /app/db/migrations
+          resources:
+            {{- toYaml .Values.migrations.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+{{- end }}

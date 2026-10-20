@@ -1,0 +1,124 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mushroom.fullname" . }}-agent
+  labels:
+    {{- include "mushroom.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agent
+spec:
+  {{- if and (not .Values.agent.autoscaling.enabled) (not .Values.keda.enabled) }}
+  replicas: {{ .Values.agent.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "mushroom.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: agent
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # Workers are interchangeable and jobs survive a restart (an unacked
+      # message is redelivered), so a surge-free rollout is fine and avoids
+      # doubling agent cost mid-deploy.
+      maxUnavailable: 1
+      maxSurge: 0
+  template:
+    metadata:
+      labels:
+        {{- include "mushroom.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: agent
+      annotations:
+        checksum/secret-provider: {{ .Values.secrets.provider | sha256sum }}
+        {{- with .Values.agent.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "mushroom.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      # A job may run for minutes. SIGTERM makes the worker stop claiming new
+      # work and finish the current job, so this must exceed jobTimeoutSeconds
+      # or Kubernetes will kill a job mid-run.
+      terminationGracePeriodSeconds: {{ .Values.agent.terminationGracePeriodSeconds }}
+      containers:
+        - name: agent
+          image: {{ include "mushroom.image" (dict "root" . "component" "agent") }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.observability.metricsPort }}
+              protocol: TCP
+          env:
+            {{- include "mushroom.commonEnv" . | nindent 12 }}
+            - name: AGENT_NAME
+              value: "general"
+            - name: JOB_TIMEOUT_SECONDS
+              value: {{ .Values.agent.jobTimeoutSeconds | quote }}
+            - name: VISIBILITY_TIMEOUT_SECONDS
+              value: {{ .Values.agent.visibilityTimeoutSeconds | quote }}
+            - name: MAX_DELIVERY_ATTEMPTS
+              value: {{ .Values.agent.maxDeliveryAttempts | quote }}
+            - name: OPENCODE_MODEL
+              value: {{ .Values.agent.model | quote }}
+            - name: REPLY_TO_SLACK
+              value: {{ .Values.agent.replyToSlack | quote }}
+            - name: WORKSPACE_ROOT
+              value: /workspace
+            # opencode reads this from the process that serves model requests;
+            # the worker invokes it with --standalone so this reaches it.
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mushroom.secretName" . }}
+                  key: {{ .Values.secrets.keys.anthropicApiKey }}
+            - name: SLACK_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mushroom.secretName" . }}
+                  key: {{ .Values.secrets.keys.slackBotToken }}
+            {{- range $k, $v := .Values.agent.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          # No HTTP server to probe, so liveness is the metrics endpoint the
+          # worker starts once its loop is running.
+          livenessProbe:
+            httpGet:
+              path: /
+              port: metrics
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.agent.resources | nindent 12 }}
+          volumeMounts:
+            # Also opencode's HOME, so it must be writable under
+            # readOnlyRootFilesystem.
+            - name: workspace
+              mountPath: /workspace
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: workspace
+          emptyDir:
+            sizeLimit: {{ .Values.agent.workspace.sizeLimit }}
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.agent.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.agent.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.agent.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

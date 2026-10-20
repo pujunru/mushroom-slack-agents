@@ -1,0 +1,54 @@
+{{- if .Values.keda.enabled }}
+{{/*
+Scale workers on queue depth rather than CPU: an agent spends most of a job
+waiting on a model, so CPU utilisation says nothing about backlog.
+
+The query counts only *visible* messages, so work already leased by a running
+worker is not double-counted as pending.
+*/}}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "mushroom.fullname" . }}-keda
+  labels:
+    {{- include "mushroom.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  # KEDA's postgresql scaler wants its own connection string.
+  connection: {{ include "mushroom.databaseUrlFromValues" . | quote }}
+---
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: {{ include "mushroom.fullname" . }}-keda
+  labels:
+    {{- include "mushroom.labels" . | nindent 4 }}
+spec:
+  secretTargetRef:
+    - parameter: connection
+      name: {{ include "mushroom.fullname" . }}-keda
+      key: connection
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ include "mushroom.fullname" . }}-agent
+  labels:
+    {{- include "mushroom.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    name: {{ include "mushroom.fullname" . }}-agent
+  minReplicaCount: {{ .Values.keda.minReplicaCount }}
+  maxReplicaCount: {{ .Values.keda.maxReplicaCount }}
+  pollingInterval: {{ .Values.keda.pollingInterval }}
+  # Long enough that a burst of short jobs does not thrash replicas.
+  cooldownPeriod: {{ .Values.keda.cooldownPeriod }}
+  triggers:
+    - type: postgresql
+      metricType: AverageValue
+      metadata:
+        targetQueryValue: {{ .Values.keda.queueDepthTarget | quote }}
+        query: "SELECT COALESCE(queue_visible_length, 0) FROM pgmq.metrics('mushroom_jobs')"
+      authenticationRef:
+        name: {{ include "mushroom.fullname" . }}-keda
+{{- end }}

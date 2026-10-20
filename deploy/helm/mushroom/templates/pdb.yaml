@@ -1,0 +1,19 @@
+{{- if .Values.gateway.podDisruptionBudget.enabled }}
+{{/*
+Slack disables an event subscription that keeps failing, so the gateway must
+survive voluntary disruption (node drains, cluster upgrades).
+*/}}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "mushroom.fullname" . }}-gateway
+  labels:
+    {{- include "mushroom.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+spec:
+  minAvailable: {{ .Values.gateway.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "mushroom.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: gateway
+{{- end }}
