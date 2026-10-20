@@ -99,13 +99,19 @@ def _health_router() -> APIRouter:
         return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
     @router.get("/stats")
-    async def stats(request: Request) -> dict[str, object]:
+    async def stats(request: Request) -> Response:
         """Queue depth and job counts. Handy during local development."""
-        queue: QueueClient = request.app.state.queue
-        return {
-            "queue": await queue.metrics(),
-            "jobs_by_status": await job_counts_by_status(),
-        }
+        # The lifespan sets this, so it is always present under uvicorn. The
+        # guard keeps the failure legible if the app is mounted without it.
+        queue: QueueClient | None = getattr(request.app.state, "queue", None)
+        if queue is None:
+            return JSONResponse({"status": "queue client unavailable"}, status_code=503)
+        return JSONResponse(
+            {
+                "queue": await queue.metrics(),
+                "jobs_by_status": await job_counts_by_status(),
+            }
+        )
 
     @router.get("/events")
     async def events(limit: int = 25) -> dict[str, object]:

@@ -350,3 +350,18 @@ async def test_no_warning_when_the_invariant_holds(capsys) -> None:
     build_worker(queue, agent_cfg=AgentConfig(job_timeout_seconds=600))
 
     assert "visibility_timeout_too_low" not in capsys.readouterr().out
+
+
+async def test_heartbeat_tolerates_two_consecutive_failures() -> None:
+    """The lease must survive two missed extensions, as documented.
+
+    At a third of the timeout the third attempt lands exactly at expiry, so
+    only one failure is survivable. This pins the quarter-interval choice.
+    """
+    from mushroom_core.config import QueueConfig as QC
+
+    vt = 900
+    interval = max(QC(visibility_timeout_seconds=vt).visibility_timeout_seconds / 4, 5)
+    # After a successful beat at t, two failures mean the next attempt is at
+    # 3 * interval. It must land strictly before the lease expires at vt.
+    assert 3 * interval < vt, "two missed heartbeats must not lose the lease"

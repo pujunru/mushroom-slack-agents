@@ -259,10 +259,13 @@ class Worker:
     async def _heartbeat(self, msg_id: int) -> None:
         """Periodically extend the message's visibility lease.
 
-        Refreshes at a third of the timeout, so two refreshes can be missed
-        before another worker could claim the message.
+        Refreshes at a quarter of the timeout, which genuinely tolerates two
+        consecutive failures: with a 900s timeout, beats land at 225s, 450s
+        and 675s, so even after missing two the next attempt still precedes
+        expiry. A third of the timeout would leave the third attempt landing
+        exactly at expiry, tolerating only one failure.
         """
-        interval = max(self._queue_cfg.visibility_timeout_seconds / 3, 5)
+        interval = max(self._queue_cfg.visibility_timeout_seconds / 4, 5)
         while True:
             await asyncio.sleep(interval)
             try:
