@@ -80,11 +80,16 @@ spec:
         app.kubernetes.io/component: postgresql
     spec:
       securityContext:
-        # The official image runs as uid 999 and needs to own its data dir.
+        # The official image runs as uid 999 and must own its data directory.
         runAsUser: 999
         runAsGroup: 999
-        fsGroup: 999
         runAsNonRoot: true
+        # fsGroup is deliberately NOT set. On a hostPath volume the kubelet
+        # re-applies fsGroup ownership on every container start, which undoes
+        # the init container's chown — so Postgres saw a root-owned directory
+        # again and initdb failed to chmod it, on every restart. The init
+        # container is what establishes ownership here; fsGroup only fought
+        # with it.
       {{- if .Values.postgresql.persistence.enabled }}
       initContainers:
         # local-path-provisioner creates the host directory as root:root 0755,
