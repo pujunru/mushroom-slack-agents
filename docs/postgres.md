@@ -68,6 +68,46 @@ both install paths.
 See [verification.md](verification.md) — this reasoning was derived from
 pgmq's source, not confirmed by execution.
 
+## The bundled Postgres starts as root, on purpose
+
+`postgresql.podSecurityContext` is empty by default, which makes the chart set
+`runAsUser: 0` on the Postgres pod. That looks wrong next to the hardened
+settings on every other pod, so it is worth saying why.
+
+The official Postgres entrypoint starts as root, takes ownership of its data
+directory, and then re-executes itself as the `postgres` user via `gosu`. The
+server process is therefore unprivileged either way; what root buys is the
+ability to fix up a data directory the storage layer handed over as
+`root:root 0755`. The image sets `USER postgres`, so without `runAsUser: 0`
+the entrypoint never gets that chance and `initdb` fails with:
+
+```
+initdb: error: could not change permissions of directory
+        "/var/lib/postgresql/data": Operation not permitted
+```
+
+The container keeps only `CHOWN`, `FOWNER` and `DAC_OVERRIDE` (to take
+ownership) plus `SETUID`/`SETGID` (to drop privileges), with everything else
+dropped.
+
+**If your storage honours `fsGroup`, prefer pinning the uid instead:**
+
+```yaml
+postgresql:
+  podSecurityContext:
+    runAsUser: 999
+    runAsGroup: 999
+    runAsNonRoot: true
+    fsGroup: 999
+```
+
+Most CSI drivers do honour it. `local-path-provisioner` on a plain kubeadm
+node does not — verified with minimal probe pods: a volume mounted with
+`fsGroup: 999` still presents as `root:root 0755` and the container can
+neither `chmod` nor write it, and an init container's `chown` is discarded
+between init and the main container. Hence the root-entrypoint default, which
+works on both kinds of storage.
+
 ## Production options
 
 The bundled chart dependency is for evaluation. For production, disable it and
