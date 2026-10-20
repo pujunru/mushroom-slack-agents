@@ -7,8 +7,8 @@ reviewed but not executed.**
 
 ## Verified by running it
 
-The unit suite (`pytest`) passes and covers the logic that carries the
-guarantees:
+The suite (`pytest`) passes — 92 tests — and covers the logic that carries
+the guarantees:
 
 | Area | What is proven |
 |---|---|
@@ -18,6 +18,9 @@ guarantees:
 | Worker delivery semantics | A successful job is acked once and recorded. A crash mid-job does **not** ack, so the message is redelivered. Delivery count past the limit is dead-lettered, and the attempt at the limit still runs. A long job extends its lease. SIGTERM defers queued messages. |
 | opencode output parsing | Known event shapes are extracted; unknown JSON is retained without crashing; non-JSON output is preserved as text rather than lost. |
 | Test-event sender | Produces signatures the gateway's verifier accepts, and its `--bad-signature` mode is correctly rejected. |
+| **The whole pipeline** | `tests/test_end_to_end.py` fakes only Postgres and opencode, driving the real signature check, router, ingest transaction, queue model, worker loop and reply path. It proves one Slack event yields exactly one agent run and one threaded reply even when Slack retries, that an agent failure reaches the user, and that an unsigned request never reaches the queue. |
+| Heartbeat arithmetic | The lease refresh interval genuinely survives two consecutive failed extensions. |
+| Config invariant | A visibility timeout at or below the job timeout is warned about at worker startup. |
 
 Run it:
 
