@@ -85,6 +85,44 @@ spec:
         runAsGroup: 999
         fsGroup: 999
         runAsNonRoot: true
+      {{- if .Values.postgresql.persistence.enabled }}
+      initContainers:
+        # local-path-provisioner creates the host directory as root:root 0755,
+        # despite its own setup script saying `mkdir -m 0777` — umask wins.
+        # fsGroup cannot rescue that: initdb chmods its data directory, and
+        # chmod requires *ownership*, not group membership. So Postgres dies
+        # with "could not change permissions of directory ... Operation not
+        # permitted" on every start.
+        #
+        # This runs once as root to hand the directory to uid 999, which is
+        # what the postgres user needs before initdb will proceed. It is a
+        # no-op on storage whose provisioner already honours fsGroup.
+        - name: init-permissions
+          image: "{{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}"
+          imagePullPolicy: {{ .Values.postgresql.image.pullPolicy }}
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              echo "before: $(stat -c '%u:%g %a' /var/lib/postgresql/data)"
+              chown 999:999 /var/lib/postgresql/data
+              chmod 0700 /var/lib/postgresql/data
+              echo "after:  $(stat -c '%u:%g %a' /var/lib/postgresql/data)"
+          securityContext:
+            # Explicitly root, overriding the pod's runAsUser/runAsNonRoot:
+            # chowning a root-owned directory is the entire purpose here.
+            runAsUser: 0
+            runAsGroup: 0
+            runAsNonRoot: false
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+              add: [CHOWN, FOWNER]
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+      {{- end }}
       containers:
         - name: postgresql
           image: "{{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}"
