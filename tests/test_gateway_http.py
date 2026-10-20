@@ -291,3 +291,61 @@ async def test_metrics_endpoint_exposes_prometheus_text(harness) -> None:
         resp = await client.get("/metrics")
     assert resp.status_code == 200
     assert "mushroom_slack_events_received_total" in resp.text
+
+
+# --- JSON encoding of database values --------------------------------------
+
+
+async def test_stats_serialises_datetimes(harness, monkeypatch) -> None:
+    """pgmq.metrics() returns a timestamptz, which asyncpg decodes to a
+    datetime that the stdlib JSON encoder cannot serialise. /stats 500s in
+    production unless the payload is coerced, and the fake queue in these
+    tests returns plain ints — so this pins the real shape."""
+    from datetime import UTC, datetime
+
+    test_app, _store, queue = harness
+    from mushroom_gateway import app as app_module
+
+    async def metrics_with_datetime(**_):
+        return {
+            "queue_name": "mushroom_jobs",
+            "queue_length": 3,
+            "queue_visible_length": 2,
+            "scrape_time": datetime.now(UTC),
+            "newest_msg_age_sec": 1,
+        }
+
+    async def counts():
+        return {"pending": 3}
+
+    monkeypatch.setattr(queue, "metrics", metrics_with_datetime)
+    monkeypatch.setattr(app_module, "job_counts_by_status", counts)
+
+    transport = ASGITransport(app=test_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get("/stats")
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["queue"]["queue_length"] == 3
+    # The datetime must survive as a string rather than breaking the response.
+    assert isinstance(body["queue"]["scrape_time"], str)
+
+
+async def test_events_serialises_datetimes(harness, monkeypatch) -> None:
+    from datetime import UTC, datetime
+
+    test_app, _store, _queue = harness
+    from mushroom_gateway import app as app_module
+
+    async def rows(limit):
+        return [{"event_id": "Ev1", "received_at": datetime.now(UTC), "status": "done"}]
+
+    monkeypatch.setattr(app_module, "recent_events", rows)
+
+    transport = ASGITransport(app=test_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get("/events")
+
+    assert resp.status_code == 200, resp.text
+    assert isinstance(resp.json()["events"][0]["received_at"], str)

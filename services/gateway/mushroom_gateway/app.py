@@ -19,6 +19,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import APIRouter, FastAPI, Request, Response
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, PlainTextResponse
 from mushroom_core import db
 from mushroom_core.config import (
@@ -106,16 +107,25 @@ def _health_router() -> APIRouter:
         queue: QueueClient | None = getattr(request.app.state, "queue", None)
         if queue is None:
             return JSONResponse({"status": "queue client unavailable"}, status_code=503)
+        # pgmq.metrics() returns a scrape_time timestamptz, which asyncpg
+        # decodes to a datetime that the stdlib JSON encoder cannot serialize —
+        # so this endpoint 500s unless the payload is coerced. jsonable_encoder
+        # handles datetimes, Decimals and UUIDs the same way FastAPI does for
+        # a declared response model.
         return JSONResponse(
-            {
-                "queue": await queue.metrics(),
-                "jobs_by_status": await job_counts_by_status(),
-            }
+            jsonable_encoder(
+                {
+                    "queue": await queue.metrics(),
+                    "jobs_by_status": await job_counts_by_status(),
+                }
+            )
         )
 
     @router.get("/events")
-    async def events(limit: int = 25) -> dict[str, object]:
-        return {"events": await recent_events(min(limit, 200))}
+    async def events(limit: int = 25) -> Response:
+        # Same datetime-encoding reason as /stats: the rows carry
+        # received_at timestamps.
+        return JSONResponse(jsonable_encoder({"events": await recent_events(min(limit, 200))}))
 
     return router
 
