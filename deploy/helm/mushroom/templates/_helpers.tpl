@@ -62,7 +62,14 @@ Image reference for a component, e.g. {{ include "mushroom.image" (dict "root" .
 {{- define "mushroom.image" -}}
 {{- $root := .root -}}
 {{- $tag := index $root.Values.image.tags .component -}}
-{{- printf "%s/%s-%s:%s" $root.Values.image.registry $root.Values.image.repository .component $tag -}}
+{{/*
+`toString` is load-bearing. An all-digit tag — a git SHA like 8458615, which
+happens roughly one time in sixteen — is parsed from YAML as a number, and
+printf "%s" on an int64 renders the literal text "%!s(int64=8458615)". That
+becomes the image reference and the pod fails with InvalidImageName, which
+reads like a registry problem rather than a templating one.
+*/}}
+{{- printf "%s/%s-%s:%s" $root.Values.image.registry $root.Values.image.repository .component (toString $tag) -}}
 {{- end }}
 
 {{/*
