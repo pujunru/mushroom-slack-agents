@@ -75,6 +75,34 @@ class Worker:
         # Identifies this pod in the jobs table, for debugging a stuck job.
         self.worker_id = os.environ.get("HOSTNAME") or f"worker-{uuid.uuid4().hex[:8]}"
         self._stopping = asyncio.Event()
+        self._warn_on_timeout_misconfiguration()
+
+    def _warn_on_timeout_misconfiguration(self) -> None:
+        """Check the one configuration invariant that silently corrupts work.
+
+        The visibility timeout must exceed the job timeout. If it does not,
+        the only thing keeping a long job from being redelivered is the
+        heartbeat task, so a single missed extension hands the same job to a
+        second worker and the agent runs twice. The heartbeat is an
+        optimisation; the timeout is the correctness backstop.
+
+        This warns rather than raising: refusing to start would turn a
+        suboptimal setting into an outage, and the heartbeat does still
+        protect the common case.
+        """
+        vt = self._queue_cfg.visibility_timeout_seconds
+        job_timeout = self._agent_cfg.job_timeout_seconds
+        if vt <= job_timeout:
+            log.warning(
+                "worker.config.visibility_timeout_too_low",
+                visibility_timeout_seconds=vt,
+                job_timeout_seconds=job_timeout,
+                detail=(
+                    "visibility timeout must exceed the job timeout, or a job "
+                    "slower than the timeout can be delivered to a second "
+                    "worker and run twice"
+                ),
+            )
 
     # -- lifecycle ----------------------------------------------------------
 

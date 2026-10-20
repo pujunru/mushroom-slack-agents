@@ -324,3 +324,29 @@ async def test_reply_is_skipped_when_disabled(db_calls) -> None:
     assert replier.posts == []
     # The job still completed and was acked.
     assert queue.deleted == [1]
+
+
+# --- configuration guards -------------------------------------------------
+
+
+async def test_warns_when_visibility_timeout_is_not_above_job_timeout(capsys) -> None:
+    """The invariant that prevents an agent running the same job twice.
+
+    structlog writes to stdout rather than through a propagating stdlib
+    logger, so this asserts on captured output rather than caplog.
+    """
+    queue = FakeQueue()
+    queue._cfg = QueueConfig(visibility_timeout_seconds=60)
+
+    build_worker(queue, agent_cfg=AgentConfig(job_timeout_seconds=600))
+
+    assert "visibility_timeout_too_low" in capsys.readouterr().out
+
+
+async def test_no_warning_when_the_invariant_holds(capsys) -> None:
+    queue = FakeQueue()
+    queue._cfg = QueueConfig(visibility_timeout_seconds=900)
+
+    build_worker(queue, agent_cfg=AgentConfig(job_timeout_seconds=600))
+
+    assert "visibility_timeout_too_low" not in capsys.readouterr().out

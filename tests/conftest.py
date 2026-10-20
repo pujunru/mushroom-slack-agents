@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import pytest
 
 
 @pytest.fixture(autouse=True)
-def _test_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def _test_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Pin the settings the tests rely on, and clear the config caches.
 
     Config objects are `lru_cache`d for the process, so a test that changes
