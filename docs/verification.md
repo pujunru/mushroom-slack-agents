@@ -92,18 +92,46 @@ psql -v ON_ERROR_STOP=1 -f pgmq.sql postgres://postgres:postgres@localhost:55432
 docker rm -f pgtest
 ```
 
-### The Helm chart
+### The Helm chart — now verified
 
-Templates were checked for balanced delimiters and block/end pairs, and
-`values.yaml`/`Chart.yaml` parse as YAML — but `helm` was not available, so
-the chart was never rendered. Before deploying:
+The chart **does** render. `helm lint` passes with zero failures, and every
+configuration renders into valid YAML:
+
+| Configuration | Result |
+|---|---|
+| `secrets.provider=plain` | 19 documents |
+| `secrets.provider=externalSecrets` | 20 documents, using `external-secrets.io/v1` |
+| KEDA + NetworkPolicy + ServiceMonitor + HPA + external database | 17 documents |
+| Plain `Ingress` instead of Traefik's CRD | renders an `Ingress` |
+
+The rendered manifests were then asserted against, not just eyeballed:
+
+- All four credentials (`DATABASE_URL`, `SLACK_SIGNING_SECRET`,
+  `SLACK_BOT_TOKEN`, `ANTHROPIC_API_KEY`) arrive via `secretKeyRef`, never as
+  literal values.
+- `readOnlyRootFilesystem`, `allowPrivilegeEscalation: false` and
+  `capabilities.drop: [ALL]` are present on the containers.
+- The gateway rolls with `maxUnavailable: 0`, so the Slack endpoint never
+  drops below its replica count.
+- `visibilityTimeoutSeconds > jobTimeoutSeconds` and
+  `terminationGracePeriodSeconds > jobTimeoutSeconds` hold *in the rendered
+  output*, not merely in the values file.
+- The migration Job carries `pre-install,pre-upgrade` with weight `-5`.
+- The `IngressRoute` routes only `/slack/events`; `/stats`, `/metrics` and
+  `/events` are not publicly exposed.
+
+Reproduce it:
 
 ```bash
 helm dependency update deploy/helm/mushroom
 helm lint deploy/helm/mushroom
-helm template mushroom deploy/helm/mushroom --set secrets.plain.slackSigningSecret=x \
-  --set secrets.plain.slackBotToken=y | kubectl apply --dry-run=client -f -
+helm template mushroom deploy/helm/mushroom \
+  --set secrets.plain.slackSigningSecret=x --set secrets.plain.slackBotToken=y
 ```
+
+The companion environment repo's `scripts/selftest.sh` runs these render
+assertions against every cluster overlay, so a values file that breaks one of
+the invariants fails before it is ever deployed.
 
 ### The container images
 
@@ -111,6 +139,23 @@ Neither Dockerfile was built. The pinned `@opencode/cli@2.1.1` version and the
 `--standalone` flag come from opencode v2's documentation; note that
 `ghcr.io/anomalyco/opencode:latest` still serves the v1 line, which is why the
 agent image installs a pinned npm package rather than using that base.
+
+## Validation against a live cluster
+
+Everything above runs without a cluster. A deployed instance is validated
+separately, from the environment repo:
+
+```bash
+./scripts/validate.sh <cluster>      # end-to-end against the real deployment
+./scripts/resilience.sh <cluster>    # failure injection (disruptive)
+```
+
+That suite is the only thing that exercises the pgmq SQL against a live
+server, and the only thing that can catch a deployment fault — a wrong
+secret, an unreachable database, an image the kubelet cannot see, or a worker
+that never consumes. It drives the system the way Slack does, with a
+correctly-signed HTTP request, and then asserts the consequences in the
+database: three deliveries of one `event_id` must produce exactly one job.
 
 ## Version pins and why
 
