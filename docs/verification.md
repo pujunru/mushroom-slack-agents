@@ -53,9 +53,27 @@ checked and corrected during development:
 - Queue tables are `pgmq.q_<name>` / `pgmq.a_<name>` with the name
   **lowercased**.
 
-What is *not* proven: that these calls execute successfully against a live
-server. The integration suite exists for exactly this and skips without a
-database.
+**These calls are now verified against a live server.** Executed on a real
+Postgres 17 with pgmq 1.13.1 (2026-10-20), confirming every item above:
+
+```
+create_1:                      -> void, no error
+create_2_idempotent:ok         -> NOTICEs only, so the unconditional
+                                  migration call is correct
+send:1                         -> the ::integer delay cast resolves
+read:msg_id=1,read_ct=1        -> vt/qty parameter names correct
+set_vt:ok                      -> third parameter is named vt
+delete:true                    -> named msg_id form returns a boolean
+tables:a_probe,q_probe,meta    -> lowercased q_/a_ prefixes
+```
+
+`read()` returns exactly `msg_id, read_ct, enqueued_at, last_read_at, vt,
+message, headers` — including the two columns added in the 1.13 line, which
+the model treats as optional. `metrics()` returns all eight columns, and
+`queue_visible_length` correctly reported `0` while a message was leased and
+`queue_length` reported `1`, which is why `depth()` prefers the former.
+
+The integration suite re-checks all of this and skips without a database.
 
 ```bash
 docker compose -f deploy/local/docker-compose.yml up -d postgres

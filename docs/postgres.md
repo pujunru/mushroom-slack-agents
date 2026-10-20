@@ -38,8 +38,16 @@ Three things to know about this path:
 - Partitioned queues are unavailable, since those need `pg_partman`, which is
   itself compiled. Mushroom does not use them.
 
-This is the path the bundled Bitnami Postgres uses, via an initdb script in
-`values.yaml`.
+Use this path for a Postgres you do not control — a managed instance, or an
+image without pgmq.
+
+The chart's own bundled Postgres does **not** need it: it runs
+`ghcr.io/pgmq/pg17-pgmq`, which ships pgmq as a compiled extension. An earlier
+version of this chart depended on the Bitnami postgresql chart and loaded pgmq
+with exactly the script above, run as an initdb hook. That was dropped for two
+reasons: Bitnami retired their free Docker Hub catalog, so the pinned image
+stopped resolving at all, and fetching pgmq at first boot made a cold start
+depend on egress to GitHub.
 
 ### Why the migration gates on the schema
 
