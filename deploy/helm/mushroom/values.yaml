@@ -183,6 +183,18 @@ postgresql:
     size: 20Gi
     # Empty uses the cluster's default StorageClass.
     storageClass: ""
+  # Pod securityContext for Postgres. Empty by default so the official
+  # entrypoint can start as root, chown its data directory and then drop to
+  # the postgres user itself — which is what works on storage that ignores
+  # fsGroup, such as local-path-provisioner.
+  #
+  # On storage that honours fsGroup, prefer pinning the uid:
+  #   podSecurityContext:
+  #     runAsUser: 999
+  #     runAsGroup: 999
+  #     runAsNonRoot: true
+  #     fsGroup: 999
+  podSecurityContext: {}
 
 externalDatabase:
   # Used when postgresql.enabled is false. Prefer supplying the whole DSN

@@ -80,14 +80,31 @@ spec:
         app.kubernetes.io/component: postgresql
     spec:
       securityContext:
-        # The official image runs as uid 999 and must own its data directory.
-        runAsUser: 999
-        runAsGroup: 999
-        runAsNonRoot: true
-        # fsGroup is what makes the subPath below usable: the kubelet applies
-        # it to the subPath directory it creates, giving Postgres a directory
-        # it owns without the provisioner's cooperation.
-        fsGroup: 999
+        # Deliberately no runAsUser/runAsNonRoot/fsGroup here.
+        #
+        # The official Postgres entrypoint starts as root, chowns PGDATA to the
+        # postgres user, and then re-executes itself as that user via gosu — so
+        # the server process never runs as root. Letting it do that is the only
+        # thing that works on this cluster's storage.
+        #
+        # Everything else was tried and provably fails here: fsGroup is ignored
+        # (a volume mounted with fsGroup: 999 still presents as root:root 0755,
+        # and the container can neither chmod nor write it), and an init
+        # container's chown is discarded — it reports 999:999 700 on exit while
+        # the main container then sees 0:0 755. Both verified with minimal
+        # probe pods on this node, not inferred.
+        #
+        # The image sets USER postgres, so runAsUser: 0 is required to let the
+        # entrypoint chown at all. It drops to the postgres user via gosu
+        # immediately afterwards, so the server process is unprivileged.
+        #
+        # On storage that honours fsGroup, prefer runAsUser: 999 with
+        # fsGroup: 999 via postgresql.podSecurityContext.
+        {{- if .Values.postgresql.podSecurityContext }}
+        {{- toYaml .Values.postgresql.podSecurityContext | nindent 8 }}
+        {{- else }}
+        runAsUser: 0
+        {{- end }}
       containers:
         - name: postgresql
           image: "{{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}"
@@ -95,7 +112,11 @@ spec:
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
+              # CHOWN/FOWNER/DAC_OVERRIDE let the entrypoint take ownership of
+              # the data directory; SETUID/SETGID let it drop to the postgres
+              # user afterwards. Everything else is dropped.
               drop: [ALL]
+              add: [CHOWN, FOWNER, DAC_OVERRIDE, SETUID, SETGID]
           ports:
             - name: postgresql
               containerPort: 5432
@@ -109,9 +130,9 @@ spec:
                 secretKeyRef:
                   name: {{ include "mushroom.fullname" . }}-postgresql
                   key: postgres-password
-            # Matches the subPath mount below, so this is the mount point of
-            # a kubelet-created, fsGroup-owned directory rather than the
-            # provisioner's root-owned volume root.
+            # Left at the image default (the mount point). The entrypoint runs
+            # as root and chowns this directory before dropping to the postgres
+            # user, so it needs no help from the volume's initial ownership.
           readinessProbe:
             exec:
               command: ["pg_isready", "-U", {{ .Values.postgresql.auth.username | quote }}, "-d", {{ .Values.postgresql.auth.database | quote }}]
@@ -131,13 +152,6 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data
-              # A subPath is the key to making this work on hostPath storage.
-              # The *kubelet* creates a subPath directory and applies the pod's
-              # fsGroup to it, so ownership no longer depends on the storage
-              # provisioner handing over a writable directory — which
-              # local-path does not: it creates root:root 0755 regardless of
-              # its own `mkdir -m 0777`, because the mode is masked by umask.
-              subPath: pgdata
       volumes:
         {{- if not .Values.postgresql.persistence.enabled }}
         - name: data
