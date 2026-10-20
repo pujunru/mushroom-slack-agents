@@ -69,6 +69,39 @@ spec:
         runAsGroup: 999
         fsGroup: 999
         runAsNonRoot: true
+      {{- if .Values.postgresql.persistence.enabled }}
+      initContainers:
+        # local-path-provisioner creates the host directory owned by root with
+        # no group write bit. fsGroup only sets *group* ownership, so Postgres
+        # (uid 999) still cannot create PGDATA inside it and the container
+        # crashloops on "Permission denied". This chowns the mount once, as
+        # root, before Postgres starts.
+        #
+        # Only needed for hostPath-backed storage. A CSI driver that honours
+        # fsGroup makes this a no-op, which is harmless.
+        - name: init-permissions
+          image: "{{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}"
+          imagePullPolicy: {{ .Values.postgresql.image.pullPolicy }}
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              chown -R 999:999 /var/lib/postgresql/data
+              chmod 700 /var/lib/postgresql/data
+          securityContext:
+            # Explicitly root, overriding the pod's runAsNonRoot, because
+            # chown is the whole point of this container.
+            runAsUser: 0
+            runAsNonRoot: false
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+              add: [CHOWN, FOWNER, DAC_OVERRIDE]
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+      {{- end }}
       containers:
         - name: postgresql
           image: "{{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}"
