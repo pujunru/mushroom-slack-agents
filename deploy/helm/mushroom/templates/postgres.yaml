@@ -84,50 +84,10 @@ spec:
         runAsUser: 999
         runAsGroup: 999
         runAsNonRoot: true
-        # fsGroup is deliberately NOT set. On a hostPath volume the kubelet
-        # re-applies fsGroup ownership on every container start, which undoes
-        # the init container's chown — so Postgres saw a root-owned directory
-        # again and initdb failed to chmod it, on every restart. The init
-        # container is what establishes ownership here; fsGroup only fought
-        # with it.
-      {{- if .Values.postgresql.persistence.enabled }}
-      initContainers:
-        # local-path-provisioner creates the host directory as root:root 0755,
-        # despite its own setup script saying `mkdir -m 0777` — umask wins.
-        # fsGroup cannot rescue that: initdb chmods its data directory, and
-        # chmod requires *ownership*, not group membership. So Postgres dies
-        # with "could not change permissions of directory ... Operation not
-        # permitted" on every start.
-        #
-        # This runs once as root to hand the directory to uid 999, which is
-        # what the postgres user needs before initdb will proceed. It is a
-        # no-op on storage whose provisioner already honours fsGroup.
-        - name: init-permissions
-          image: "{{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}"
-          imagePullPolicy: {{ .Values.postgresql.image.pullPolicy }}
-          command:
-            - sh
-            - -c
-            - |
-              set -eu
-              echo "before: $(stat -c '%u:%g %a' /var/lib/postgresql/data)"
-              chown 999:999 /var/lib/postgresql/data
-              chmod 0700 /var/lib/postgresql/data
-              echo "after:  $(stat -c '%u:%g %a' /var/lib/postgresql/data)"
-          securityContext:
-            # Explicitly root, overriding the pod's runAsUser/runAsNonRoot:
-            # chowning a root-owned directory is the entire purpose here.
-            runAsUser: 0
-            runAsGroup: 0
-            runAsNonRoot: false
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: [ALL]
-              add: [CHOWN, FOWNER]
-          volumeMounts:
-            - name: data
-              mountPath: /var/lib/postgresql/data
-      {{- end }}
+        # fsGroup is what makes the subPath below usable: the kubelet applies
+        # it to the subPath directory it creates, giving Postgres a directory
+        # it owns without the provisioner's cooperation.
+        fsGroup: 999
       containers:
         - name: postgresql
           image: "{{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}"
@@ -149,15 +109,9 @@ spec:
                 secretKeyRef:
                   name: {{ include "mushroom.fullname" . }}-postgresql
                   key: postgres-password
-            # PGDATA is deliberately left at the image's default, which is the
-            # mount point itself. The official entrypoint chowns and
-            # permissions that directory during initdb, so no init container
-            # is needed to fix up a root-owned hostPath volume.
-            #
-            # Pointing PGDATA at a *subdirectory* instead looks tidier but
-            # breaks on hostPath storage: the subdirectory has to be created by
-            # the postgres user inside a root-owned parent, which fails with
-            # "mkdir: Permission denied" and crashloops the pod.
+            # Matches the subPath mount below, so this is the mount point of
+            # a kubelet-created, fsGroup-owned directory rather than the
+            # provisioner's root-owned volume root.
           readinessProbe:
             exec:
               command: ["pg_isready", "-U", {{ .Values.postgresql.auth.username | quote }}, "-d", {{ .Values.postgresql.auth.database | quote }}]
@@ -177,6 +131,13 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data
+              # A subPath is the key to making this work on hostPath storage.
+              # The *kubelet* creates a subPath directory and applies the pod's
+              # fsGroup to it, so ownership no longer depends on the storage
+              # provisioner handing over a writable directory — which
+              # local-path does not: it creates root:root 0755 regardless of
+              # its own `mkdir -m 0777`, because the mode is masked by umask.
+              subPath: pgdata
       volumes:
         {{- if not .Values.postgresql.persistence.enabled }}
         - name: data
