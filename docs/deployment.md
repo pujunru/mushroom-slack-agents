@@ -1,5 +1,24 @@
 # Deployment
 
+## Environment-specific configuration belongs elsewhere
+
+This repo is deliberately environment-agnostic: it knows nothing about any
+particular cluster, hostname or credential, which is what lets it be published
+as-is. Per-cluster values, bootstrap automation, deploy scripts and live
+validation belong in a separate private repo alongside it.
+
+The reference layout is a sibling directory:
+
+```
+~/development/mushroom/        this repo: code, chart, Dockerfiles
+~/development/mushroom-env/    private: cluster values, deploy + validation
+```
+
+That repo holds the Helm values overlay per cluster, the scripts that build and
+deploy, and an end-to-end suite that runs against a live deployment. Nothing
+below assumes it exists — the chart installs on its own — but the split is why
+no hostname or secret appears anywhere in this repo.
+
 ## Prerequisites
 
 - A Kubernetes cluster and Helm 3.
