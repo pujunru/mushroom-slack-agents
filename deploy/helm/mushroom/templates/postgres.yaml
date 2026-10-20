@@ -11,6 +11,16 @@ pgmq's SQL from GitHub — so a cold start needed working egress to raw
 This is a single-replica StatefulSet with a PVC. Appropriate for a home or
 evaluation cluster; for anything you care about, set postgresql.enabled=false
 and point externalDatabase at a managed or operator-run instance.
+
+All three resources are installed as pre-install/pre-upgrade hooks at weight
+-8, below the migration Job's -5. That is not decoration: Helm creates no
+ordinary resources until every hook has completed, so a migration Job that
+waits for Postgres would wait for a Service that Helm will not create until
+the Job exits. The symptom is the Job logging "Name or service not known"
+until it times out.
+
+resource-policy keep means `helm uninstall` leaves the data behind. Delete the
+PVC explicitly to destroy the database.
 */}}
 apiVersion: v1
 kind: Secret
@@ -19,6 +29,8 @@ metadata:
   labels:
     {{- include "mushroom.labels" . | nindent 4 }}
     app.kubernetes.io/component: postgresql
+  annotations:
+    {{- include "mushroom.postgresHookAnnotations" . | nindent 4 }}
 type: Opaque
 stringData:
   # A generated password would rotate on every upgrade and break the existing
@@ -32,6 +44,8 @@ metadata:
   labels:
     {{- include "mushroom.labels" . | nindent 4 }}
     app.kubernetes.io/component: postgresql
+  annotations:
+    {{- include "mushroom.postgresHookAnnotations" . | nindent 4 }}
 spec:
   type: ClusterIP
   ports:
@@ -50,6 +64,8 @@ metadata:
   labels:
     {{- include "mushroom.labels" . | nindent 4 }}
     app.kubernetes.io/component: postgresql
+  annotations:
+    {{- include "mushroom.postgresHookAnnotations" . | nindent 4 }}
 spec:
   replicas: 1
   serviceName: {{ include "mushroom.fullname" . }}-postgresql

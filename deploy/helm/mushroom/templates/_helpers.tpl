@@ -105,3 +105,19 @@ Credentials always arrive by secretKeyRef, never as literal values.
 - name: DEAD_LETTER_QUEUE_NAME
   value: "mushroom_jobs_dlq"
 {{- end }}
+
+{{/*
+Hook annotations for the bundled Postgres.
+
+Weight -8 places it after the ServiceAccount and Secret (-10) and before the
+migration Job (-5), so the Job finds a database to connect to.
+
+`keep` protects the data from `helm uninstall`, and `before-hook-creation` is
+deliberately absent: deleting and recreating the StatefulSet on every upgrade
+would restart the database on each deploy.
+*/}}
+{{- define "mushroom.postgresHookAnnotations" -}}
+"helm.sh/hook": pre-install,pre-upgrade
+"helm.sh/hook-weight": "-8"
+"helm.sh/resource-policy": keep
+{{- end }}
