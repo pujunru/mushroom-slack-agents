@@ -43,6 +43,12 @@ spec:
             {{- include "mushroom.commonEnv" . | nindent 12 }}
             - name: MIGRATIONS_DIR
               value: /app/db/migrations
+            # This job is a pre-install hook, so on a first install Postgres
+            # is still running initdb. The runner polls until it accepts
+            # connections rather than failing instantly and burning the
+            # backoffLimit in seconds.
+            - name: DB_WAIT_SECONDS
+              value: {{ .Values.migrations.databaseWaitSeconds | quote }}
           resources:
             {{- toYaml .Values.migrations.resources | nindent 12 }}
           volumeMounts:

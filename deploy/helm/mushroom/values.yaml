@@ -260,6 +260,10 @@ migrations:
   enabled: true
   backoffLimit: 3
   activeDeadlineSeconds: 600
+  # How long the runner waits for Postgres to accept connections before giving
+  # up. On a first install the database is still running initdb when this hook
+  # fires, so this must cover a cold start.
+  databaseWaitSeconds: 300
   resources:
     requests:
       cpu: 50m
