@@ -15,11 +15,10 @@ keywords:
 maintainers:
   - name: Mushroom contributors
 
-# Postgres is a chart dependency so `helm install` yields a working stack.
-# Disable it (postgresql.enabled=false) and point at an external database for
-# anything beyond evaluation; see values.yaml.
-dependencies:
-  - name: postgresql
-    version: "16.x.x"
-    repository: https://charts.bitnami.com/bitnami
-    condition: postgresql.enabled
+# No chart dependencies. Postgres is deployed by this chart's own templates
+# using the official pgmq image, which ships pgmq as a real extension.
+#
+# An earlier version depended on the Bitnami postgresql chart. That was dropped
+# because Bitnami retired their free Docker Hub catalog, so the pinned image
+# stopped resolving entirely — and because the Bitnami image has no pgmq, which
+# forced a fragile initdb script that curled pgmq's SQL at container start.

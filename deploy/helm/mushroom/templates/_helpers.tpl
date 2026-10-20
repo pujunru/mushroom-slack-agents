@@ -71,7 +71,7 @@ taken from the secret so the password never appears in a manifest.
 */}}
 {{- define "mushroom.databaseUrlFromValues" -}}
 {{- if .Values.postgresql.enabled -}}
-{{- printf "postgresql://%s:%s@%s-postgresql:5432/%s" .Values.postgresql.auth.username .Values.postgresql.auth.password .Release.Name .Values.postgresql.auth.database -}}
+{{- printf "postgresql://%s:%s@%s-postgresql:5432/%s" .Values.postgresql.auth.username .Values.postgresql.auth.password (include "mushroom.fullname" .) .Values.postgresql.auth.database -}}
 {{- else -}}
 {{- printf "postgresql://%s@%s:%v/%s" .Values.externalDatabase.user .Values.externalDatabase.host .Values.externalDatabase.port .Values.externalDatabase.database -}}
 {{- end -}}

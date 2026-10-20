@@ -1,0 +1,134 @@
+{{- if .Values.postgresql.enabled }}
+{{/*
+Postgres, deployed directly rather than via a dependency chart.
+
+The image is pgmq's official build, which ships pgmq as a compiled extension.
+That removes the one genuinely fragile piece of the earlier setup: a Bitnami
+image with no pgmq, loaded at first boot by an initdb script that curled
+pgmq's SQL from GitHub — so a cold start needed working egress to raw
+.githubusercontent.com, and the load ran only on a fresh volume.
+
+This is a single-replica StatefulSet with a PVC. Appropriate for a home or
+evaluation cluster; for anything you care about, set postgresql.enabled=false
+and point externalDatabase at a managed or operator-run instance.
+*/}}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "mushroom.fullname" . }}-postgresql
+  labels:
+    {{- include "mushroom.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgresql
+type: Opaque
+stringData:
+  # A generated password would rotate on every upgrade and break the existing
+  # volume's authentication, so this is taken from values with a default.
+  postgres-password: {{ .Values.postgresql.auth.password | quote }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "mushroom.fullname" . }}-postgresql
+  labels:
+    {{- include "mushroom.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgresql
+spec:
+  type: ClusterIP
+  ports:
+    - port: 5432
+      targetPort: postgresql
+      protocol: TCP
+      name: postgresql
+  selector:
+    {{- include "mushroom.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: postgresql
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "mushroom.fullname" . }}-postgresql
+  labels:
+    {{- include "mushroom.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgresql
+spec:
+  replicas: 1
+  serviceName: {{ include "mushroom.fullname" . }}-postgresql
+  selector:
+    matchLabels:
+      {{- include "mushroom.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: postgresql
+  template:
+    metadata:
+      labels:
+        {{- include "mushroom.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: postgresql
+    spec:
+      securityContext:
+        # The official image runs as uid 999 and needs to own its data dir.
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        runAsNonRoot: true
+      containers:
+        - name: postgresql
+          image: "{{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}"
+          imagePullPolicy: {{ .Values.postgresql.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          ports:
+            - name: postgresql
+              containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              value: {{ .Values.postgresql.auth.username | quote }}
+            - name: POSTGRES_DB
+              value: {{ .Values.postgresql.auth.database | quote }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mushroom.fullname" . }}-postgresql
+                  key: postgres-password
+            # The image's default PGDATA is the volume root, which fails when
+            # the volume has a lost+found directory. A subdirectory avoids it.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", {{ .Values.postgresql.auth.username | quote }}, "-d", {{ .Values.postgresql.auth.database | quote }}]
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", {{ .Values.postgresql.auth.username | quote }}, "-d", {{ .Values.postgresql.auth.database | quote }}]
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 4
+          resources:
+            {{- toYaml .Values.postgresql.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        {{- if not .Values.postgresql.persistence.enabled }}
+        - name: data
+          emptyDir: {}
+        {{- end }}
+  {{- if .Values.postgresql.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- with .Values.postgresql.persistence.storageClass }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.postgresql.persistence.size }}
+  {{- end }}
+{{- end }}

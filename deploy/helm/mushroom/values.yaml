@@ -155,41 +155,34 @@ ingress:
 # Database
 # ---------------------------------------------------------------------------
 postgresql:
-  # Bundled Postgres for evaluation. For production, disable this and set
-  # `externalDatabase`, ideally with CloudNativePG or a managed instance.
+  # Bundled Postgres, deployed by this chart's own templates. Adequate for a
+  # home or evaluation cluster. For anything you care about, set this to false
+  # and point externalDatabase at a managed or operator-run instance with
+  # backups.
   enabled: true
+  image:
+    # pgmq's official image: Postgres with pgmq as a compiled extension, so no
+    # init script has to fetch anything at container start. Pinned, because
+    # pgmq's own README quickstart still references an older version.
+    repository: ghcr.io/pgmq/pg17-pgmq
+    tag: v1.13.1
+    pullPolicy: IfNotPresent
   auth:
     username: mushroom
     password: mushroom
     database: mushroom
-  primary:
-    # pgmq must be present on the server. The Bitnami image does not ship it,
-    # so the pure-SQL install is loaded via an init script — pgmq has no C
-    # code, which is what makes that possible.
-    initdb:
-      scripts:
-        00-pgmq.sh: |
-          #!/bin/bash
-          set -euo pipefail
-          # Pinned: pgmq's own quickstart still references an older version.
-          PGMQ_VERSION="v1.13.1"
-          URL="https://raw.githubusercontent.com/pgmq/pgmq/${PGMQ_VERSION}/pgmq-extension/sql/pgmq.sql"
-          echo "Loading pgmq ${PGMQ_VERSION} (pure SQL) into ${POSTGRES_DATABASE:-mushroom}"
-          curl -fsSL "$URL" -o /tmp/pgmq.sql
-          psql -v ON_ERROR_STOP=1 \
-               --username "${POSTGRES_USER}" \
-               --dbname "${POSTGRES_DATABASE:-mushroom}" \
-               -f /tmp/pgmq.sql
-    resources:
-      requests:
-        cpu: 250m
-        memory: 512Mi
-      limits:
-        cpu: "2"
-        memory: 2Gi
-    persistence:
-      enabled: true
-      size: 20Gi
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  persistence:
+    enabled: true
+    size: 20Gi
+    # Empty uses the cluster's default StorageClass.
+    storageClass: ""
 
 externalDatabase:
   # Used when postgresql.enabled is false. Prefer supplying the whole DSN
