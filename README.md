@@ -188,6 +188,13 @@ The ones that matter most:
 | `JOB_TIMEOUT_SECONDS` | `600` | Hard ceiling on one agent run. |
 | `MAX_DELIVERY_ATTEMPTS` | `5` | Then dead-lettered. |
 
+## Choosing a model provider
+
+OpenRouter by default, but the provider is configuration rather than code —
+`agent.model` plus a matching `agent.modelApiKeyEnv` is the whole switch. See
+[docs/models.md](docs/models.md) for direct-provider setups, model choices, and
+OpenRouter's prepaid and rate-limit behaviour.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
