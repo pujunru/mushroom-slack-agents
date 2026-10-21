@@ -4,8 +4,8 @@ Targets **opencode v2** (`@opencode/cli`, org `anomalyco`). Three v2 specifics
 drive this module:
 
 - `--standalone` runs a private foreground server for the invocation instead
-  of using the shared background service. Without it, `ANTHROPIC_API_KEY` from
-  this process's environment never reaches the process that makes model
+  of using the shared background service. Without it, the provider credential
+  from this process's environment never reaches the process that makes model
   requests, and the run fails to authenticate. This is also what upstream's
   own CI recipe uses.
 - `--format json` emits newline-delimited JSON events rather than prose. The
@@ -157,9 +157,12 @@ def _subprocess_env(cfg: AgentConfig) -> dict[str, str]:
     container: no `auth.json`, no `opencode auth login` (that needs a TTY).
     """
     env = os.environ.copy()
-    key = cfg.anthropic_api_key.get_secret_value()
+    key = cfg.model_api_key.get_secret_value()
     if key:
-        env["ANTHROPIC_API_KEY"] = key
+        # The variable *name* is configuration, not a constant: opencode reads
+        # a provider-specific one, so a model change from openrouter/... to
+        # anthropic/... also changes which variable must be set.
+        env[cfg.model_api_key_env] = key
     # Keep opencode's state inside the writable workspace so the image can
     # run with a read-only root filesystem.
     env.setdefault("HOME", cfg.workspace_root)

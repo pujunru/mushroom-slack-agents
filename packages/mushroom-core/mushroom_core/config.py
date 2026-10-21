@@ -82,8 +82,24 @@ class AgentConfig(BaseConfig):
     job_timeout_seconds: int = Field(default=600, ge=1)
     workspace_root: str = Field(default="/workspace")
     opencode_binary: str = Field(default="opencode")
-    opencode_model: str = Field(default="anthropic/claude-sonnet-5")
-    anthropic_api_key: SecretStr = Field(default=SecretStr(""))
+    # Which model opencode invokes, in its `provider/model` form. The provider
+    # prefix selects the backend, so changing provider is a values change
+    # rather than a code change.
+    opencode_model: str = Field(
+        default="openrouter/anthropic/claude-sonnet-4.5",
+        description="opencode model string, e.g. openrouter/<vendor>/<model>",
+    )
+    # The credential opencode needs, and the environment variable it expects
+    # to find it in. Keeping the *name* configurable is what makes this
+    # provider-agnostic: opencode reads a provider-specific variable
+    # (OPENROUTER_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY, ...) from the
+    # process serving model requests, so the worker must set whichever one
+    # matches the configured model.
+    model_api_key: SecretStr = Field(default=SecretStr(""))
+    model_api_key_env: str = Field(
+        default="OPENROUTER_API_KEY",
+        description="Env var name opencode reads the credential from",
+    )
     # Post the agent's result back into the originating Slack thread.
     reply_to_slack: bool = Field(default=True)
 

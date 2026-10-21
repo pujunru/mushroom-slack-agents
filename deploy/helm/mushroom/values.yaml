@@ -76,7 +76,16 @@ agent:
   # running. The worker also heartbeats its lease.
   visibilityTimeoutSeconds: 900
   maxDeliveryAttempts: 5
-  model: "anthropic/claude-sonnet-5"
+  # opencode model string, in `provider/model` form. The provider prefix
+  # selects the backend — switching providers is a values change, not a code
+  # change. Examples:
+  #   openrouter/anthropic/claude-sonnet-4.5   (one key, many vendors)
+  #   anthropic/claude-sonnet-4.5              (direct)
+  #   openai/gpt-5                             (direct)
+  model: "openrouter/anthropic/claude-sonnet-4.5"
+  # The environment variable opencode reads the credential from. It is
+  # provider-specific, so it must match `model` above.
+  modelApiKeyEnv: "OPENROUTER_API_KEY"
   replyToSlack: true
   resources:
     requests:
@@ -220,7 +229,7 @@ secrets:
   keys:
     slackSigningSecret: slack-signing-secret
     slackBotToken: slack-bot-token
-    anthropicApiKey: anthropic-api-key
+    modelApiKey: model-api-key
     databaseUrl: database-url
 
   existing:
@@ -231,7 +240,7 @@ secrets:
     # version control, and prefer the externalSecrets provider.
     slackSigningSecret: ""
     slackBotToken: ""
-    anthropicApiKey: ""
+    modelApiKey: ""
 
   externalSecrets:
     # apiVersion external-secrets.io/v1 — v1beta1 stopped being served in
@@ -260,7 +269,7 @@ secrets:
     remoteKeys:
       slackSigningSecret: slack_signing_secret
       slackBotToken: slack_bot_token
-      anthropicApiKey: anthropic_api_key
+      modelApiKey: model_api_key
       databaseUrl: database_url
 
 # ---------------------------------------------------------------------------

@@ -15,7 +15,10 @@ from mushroom_core.config import AgentConfig
 
 
 def cfg(**kw) -> AgentConfig:
-    defaults = {"opencode_binary": "opencode", "opencode_model": "anthropic/claude-sonnet-5"}
+    defaults = {
+        "opencode_binary": "opencode",
+        "opencode_model": "openrouter/anthropic/claude-sonnet-4.5",
+    }
     defaults.update(kw)
     return AgentConfig(**defaults)
 
@@ -24,7 +27,7 @@ def cfg(**kw) -> AgentConfig:
 
 
 def test_command_uses_standalone_for_unattended_runs() -> None:
-    """--standalone is what gets ANTHROPIC_API_KEY to the model process."""
+    """--standalone is what gets the provider credential to the model process."""
     cmd = build_command("hello", cfg())
     assert cmd[:3] == ["opencode", "run", "--standalone"]
 
@@ -33,7 +36,7 @@ def test_command_requests_json_output_and_model() -> None:
     cmd = build_command("hello", cfg())
     assert "--format" in cmd
     assert cmd[cmd.index("--format") + 1] == "json"
-    assert cmd[cmd.index("--model") + 1] == "anthropic/claude-sonnet-5"
+    assert cmd[cmd.index("--model") + 1] == "openrouter/anthropic/claude-sonnet-4.5"
 
 
 def test_prompt_is_the_final_argv_element() -> None:
@@ -159,3 +162,50 @@ async def test_missing_binary_raises_opencode_error() -> None:
 
     with pytest.raises(OpencodeError, match="not found on PATH"):
         await run_opencode("hi", cfg(opencode_binary="definitely-not-installed-xyz"))
+
+
+# --- provider credential wiring -------------------------------------------
+
+
+def test_credential_is_exported_under_the_configured_variable() -> None:
+    """The variable name is configuration, not a constant.
+
+    opencode reads a provider-specific variable, so switching the model from
+    openrouter/... to anthropic/... must also change which variable carries
+    the key. Hardcoding one provider's name is what this guards against.
+    """
+    from mushroom_agent.opencode import _subprocess_env
+    from pydantic import SecretStr
+
+    env = _subprocess_env(
+        cfg(
+            model_api_key=SecretStr("sk-or-v1-example"),
+            model_api_key_env="OPENROUTER_API_KEY",
+        )
+    )
+    assert env["OPENROUTER_API_KEY"] == "sk-or-v1-example"
+    assert "ANTHROPIC_API_KEY" not in env
+
+
+def test_credential_variable_follows_the_provider() -> None:
+    from mushroom_agent.opencode import _subprocess_env
+    from pydantic import SecretStr
+
+    env = _subprocess_env(
+        cfg(
+            opencode_model="anthropic/claude-sonnet-4.5",
+            model_api_key=SecretStr("sk-ant-example"),
+            model_api_key_env="ANTHROPIC_API_KEY",
+        )
+    )
+    assert env["ANTHROPIC_API_KEY"] == "sk-ant-example"
+    assert "OPENROUTER_API_KEY" not in env
+
+
+def test_no_credential_variable_when_unset() -> None:
+    """An empty key must not export an empty variable, which would look
+    configured to opencode and fail with a confusing auth error."""
+    from mushroom_agent.opencode import _subprocess_env
+
+    env = _subprocess_env(cfg())
+    assert "OPENROUTER_API_KEY" not in env

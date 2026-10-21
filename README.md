@@ -67,7 +67,7 @@ Requires Docker and a Slack app.
 
 ```bash
 git clone https://github.com/your-org/mushroom && cd mushroom
-cp .env.example .env          # fill in SLACK_SIGNING_SECRET, SLACK_BOT_TOKEN, ANTHROPIC_API_KEY
+cp .env.example .env          # fill in SLACK_SIGNING_SECRET, SLACK_BOT_TOKEN, MODEL_API_KEY
 ./scripts/dev.sh up
 ```
 
@@ -99,7 +99,7 @@ helm install mushroom deploy/helm/mushroom \
   --set secrets.provider=plain \
   --set secrets.plain.slackSigningSecret=... \
   --set secrets.plain.slackBotToken=... \
-  --set secrets.plain.anthropicApiKey=...
+  --set secrets.plain.modelApiKey=...
 ```
 
 That is the evaluation path. For anything real, put the secrets in Vault and
@@ -107,7 +107,7 @@ let External Secrets Operator sync them:
 
 ```bash
 export VAULT_ADDR=https://vault.example.com VAULT_TOKEN=<admin>
-SLACK_SIGNING_SECRET=... SLACK_BOT_TOKEN=... ANTHROPIC_API_KEY=... \
+SLACK_SIGNING_SECRET=... SLACK_BOT_TOKEN=... MODEL_API_KEY=... \
   ./scripts/vault-bootstrap.sh
 
 helm upgrade --install mushroom deploy/helm/mushroom \
@@ -181,8 +181,9 @@ The ones that matter most:
 | `DATABASE_URL` | — | Shared Postgres DSN. |
 | `SLACK_SIGNING_SECRET` | — | Required; requests are rejected without it. |
 | `SLACK_BOT_TOKEN` | — | Needed to post replies. |
-| `ANTHROPIC_API_KEY` | — | Passed to opencode. |
-| `OPENCODE_MODEL` | `anthropic/claude-sonnet-5` | |
+| `MODEL_API_KEY` | — | The model provider credential, passed to opencode. |
+| `MODEL_API_KEY_ENV` | `OPENROUTER_API_KEY` | Variable name opencode reads it from; must match the provider. |
+| `OPENCODE_MODEL` | `openrouter/anthropic/claude-sonnet-4.5` | `provider/model`; the prefix selects the backend. |
 | `VISIBILITY_TIMEOUT_SECONDS` | `900` | Must exceed `JOB_TIMEOUT_SECONDS`. |
 | `JOB_TIMEOUT_SECONDS` | `600` | Hard ceiling on one agent run. |
 | `MAX_DELIVERY_ATTEMPTS` | `5` | Then dead-lettered. |

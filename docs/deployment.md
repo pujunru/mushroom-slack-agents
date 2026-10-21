@@ -76,7 +76,7 @@ helm install mushroom deploy/helm/mushroom \
   --set secrets.provider=plain \
   --set secrets.plain.slackSigningSecret="$SLACK_SIGNING_SECRET" \
   --set secrets.plain.slackBotToken="$SLACK_BOT_TOKEN" \
-  --set secrets.plain.anthropicApiKey="$ANTHROPIC_API_KEY"
+  --set secrets.plain.modelApiKey="$MODEL_API_KEY"
 ```
 
 Migrations run as a pre-install hook, so the schema exists before any pod
@@ -90,7 +90,7 @@ to evaluate.
 
 ```bash
 export VAULT_ADDR=https://vault.example.com VAULT_TOKEN=<admin>
-SLACK_SIGNING_SECRET=... SLACK_BOT_TOKEN=... ANTHROPIC_API_KEY=... \
+SLACK_SIGNING_SECRET=... SLACK_BOT_TOKEN=... MODEL_API_KEY=... \
   K8S_NAMESPACE=mushroom K8S_SERVICE_ACCOUNT=mushroom \
   ./scripts/vault-bootstrap.sh
 ```

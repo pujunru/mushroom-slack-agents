@@ -105,8 +105,9 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-mushroom}:${POSTGRES_PASSWORD:-mushroom}@postgres:5432/${POSTGRES_DB:-mushroom}
       SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      OPENCODE_MODEL: ${OPENCODE_MODEL:-anthropic/claude-sonnet-5}
+      MODEL_API_KEY: ${MODEL_API_KEY:-${OPENROUTER_API_KEY:-}}
+      MODEL_API_KEY_ENV: ${MODEL_API_KEY_ENV:-OPENROUTER_API_KEY}
+      OPENCODE_MODEL: ${OPENCODE_MODEL:-openrouter/anthropic/claude-sonnet-4.5}
       AGENT_NAME: general
       WORKSPACE_ROOT: /workspace
       LOG_FORMAT: console

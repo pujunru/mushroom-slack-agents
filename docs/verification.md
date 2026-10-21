@@ -125,7 +125,7 @@ configuration renders into valid YAML:
 The rendered manifests were then asserted against, not just eyeballed:
 
 - All four credentials (`DATABASE_URL`, `SLACK_SIGNING_SECRET`,
-  `SLACK_BOT_TOKEN`, `ANTHROPIC_API_KEY`) arrive via `secretKeyRef`, never as
+  `SLACK_BOT_TOKEN`, `MODEL_API_KEY`) arrive via `secretKeyRef`, never as
   literal values.
 - `readOnlyRootFilesystem`, `allowPrivilegeEscalation: false` and
   `capabilities.drop: [ALL]` are present on the containers.

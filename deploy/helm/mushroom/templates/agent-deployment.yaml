@@ -69,13 +69,17 @@ spec:
               value: {{ .Values.agent.replyToSlack | quote }}
             - name: WORKSPACE_ROOT
               value: /workspace
-            # opencode reads this from the process that serves model requests;
-            # the worker invokes it with --standalone so this reaches it.
-            - name: ANTHROPIC_API_KEY
+            - name: MODEL_API_KEY_ENV
+              value: {{ .Values.agent.modelApiKeyEnv | quote }}
+            # The credential, exported under whichever variable name the
+            # configured provider expects. opencode reads it from the process
+            # that serves model requests, and the worker invokes it with
+            # --standalone so this environment reaches it.
+            - name: MODEL_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: {{ include "mushroom.secretName" . }}
-                  key: {{ .Values.secrets.keys.anthropicApiKey }}
+                  key: {{ .Values.secrets.keys.modelApiKey }}
             - name: SLACK_BOT_TOKEN
               valueFrom:
                 secretKeyRef:
