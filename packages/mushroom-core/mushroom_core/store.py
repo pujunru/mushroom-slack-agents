@@ -115,6 +115,12 @@ async def thread_is_known(
             await c.fetchval(
                 """
                 SELECT EXISTS (
+                    -- The bot has spoken here, so this is our conversation.
+                    SELECT 1 FROM thread_messages
+                    WHERE channel = $1 AND thread_ts = $2 AND role = 'assistant'
+                )
+                OR EXISTS (
+                    -- Or we produced work here before thread_messages existed.
                     SELECT 1
                     FROM slack_events e
                     JOIN jobs j ON j.event_id = e.event_id
@@ -236,6 +242,137 @@ async def job_counts_by_status() -> dict[str, int]:
     async with acquire() as c:
         rows = await c.fetch("SELECT status, count(*) AS n FROM jobs GROUP BY status")
     return {r["status"]: r["n"] for r in rows}
+
+
+# ---------------------------------------------------------------------------
+# Thread history
+# ---------------------------------------------------------------------------
+
+
+async def record_thread_message(
+    *,
+    channel: str,
+    thread_ts: str,
+    role: str,
+    message_ts: str,
+    text: str,
+    slack_user: str | None = None,
+    job_id: uuid.UUID | None = None,
+    conn: asyncpg.Connection | None = None,
+) -> None:
+    """Append one turn to a thread's history.
+
+    Both sides of the conversation go here: a user's message when it is
+    ingested, and the bot's reply when it is posted. Replaying only one side
+    would give the agent a transcript with every other line missing.
+
+    Idempotent on (channel, message_ts), because Slack retries deliveries and
+    a reply can be re-posted — neither should duplicate a turn.
+    """
+
+    async def _run(c: asyncpg.Connection) -> None:
+        await c.execute(
+            """
+            INSERT INTO thread_messages
+                (channel, thread_ts, role, message_ts, slack_user, text, job_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            ON CONFLICT (channel, message_ts) DO NOTHING
+            """,
+            channel,
+            thread_ts,
+            role,
+            message_ts,
+            slack_user,
+            text,
+            job_id,
+        )
+
+    if conn is not None:
+        await _run(conn)
+    else:
+        async with acquire() as c:
+            await _run(c)
+
+
+async def thread_history(
+    channel: str,
+    thread_ts: str,
+    *,
+    limit: int = 20,
+    before_ts: str | None = None,
+) -> list[dict[str, Any]]:
+    """The last `limit` turns of a thread, oldest first.
+
+    `before_ts` excludes the triggering message itself, so a prompt is not
+    duplicated as both history and instruction.
+
+    The ordering is deliberate: the query takes the *most recent* `limit`
+    turns, then reverses them. Taking the oldest would mean a long thread
+    replays its opening forever and never shows the agent what was just said.
+    """
+    async with acquire() as c:
+        rows = await c.fetch(
+            """
+            SELECT role, text, slack_user, message_ts
+            FROM (
+                SELECT role, text, slack_user, message_ts
+                FROM thread_messages
+                WHERE channel = $1
+                  AND thread_ts = $2
+                  AND ($3::text IS NULL OR message_ts < $3)
+                ORDER BY message_ts DESC
+                LIMIT $4
+            ) recent
+            ORDER BY message_ts ASC
+            """,
+            channel,
+            thread_ts,
+            before_ts,
+            limit,
+        )
+    return [dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Thread -> opencode session
+# ---------------------------------------------------------------------------
+
+# Namespace in the KV table. Sessions are scoped per agent profile, because a
+# different agent is a different conversation even in the same thread.
+SESSION_NAMESPACE = "opencode_session"
+
+# How long an idle thread keeps its session. opencode's own state is on the
+# worker's disk, so a session id outliving the pod that created it is a
+# dangling reference; a week is long enough for a conversation to continue
+# across a weekend and short enough to self-clean.
+SESSION_TTL_SECONDS = 7 * 24 * 3600
+
+
+def _session_key(agent: str, channel: str, thread_ts: str) -> str:
+    return f"{agent}:{channel}:{thread_ts}"
+
+
+async def get_thread_session(agent: str, channel: str, thread_ts: str) -> str | None:
+    """The opencode session this thread has been using, if any."""
+    value = await kv_get(SESSION_NAMESPACE, _session_key(agent, channel, thread_ts))
+    if isinstance(value, dict):
+        sid = value.get("session_id")
+        return sid if isinstance(sid, str) and sid else None
+    return None
+
+
+async def set_thread_session(agent: str, channel: str, thread_ts: str, session_id: str) -> None:
+    """Remember which opencode session belongs to this thread.
+
+    Writing it on every turn refreshes the TTL, so an active conversation
+    never expires mid-flow.
+    """
+    await kv_set(
+        SESSION_NAMESPACE,
+        _session_key(agent, channel, thread_ts),
+        {"session_id": session_id},
+        ttl_seconds=SESSION_TTL_SECONDS,
+    )
 
 
 # ---------------------------------------------------------------------------

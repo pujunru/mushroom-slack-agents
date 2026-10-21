@@ -39,7 +39,13 @@ from mushroom_core.config import (
 from mushroom_core.logging import configure_logging, get_logger
 from mushroom_core.models import EventStatus, Job, JobResult, JobStatus, QueueMessage
 from mushroom_core.queue import QueueClient
-from mushroom_core.store import complete_job, mark_job_running, set_event_status
+from mushroom_core.store import (
+    complete_job,
+    get_thread_session,
+    mark_job_running,
+    set_event_status,
+    set_thread_session,
+)
 
 from .metrics import (
     JOB_DURATION,
@@ -228,13 +234,32 @@ class Worker:
         await self._reply(job, result)
 
     async def _execute(self, job: Job) -> JobResult:
-        """Run the agent for one job."""
+        """Run the agent for one job, continuing the thread's conversation.
+
+        A Slack thread maps to one opencode session, so a follow-up resumes
+        the same conversation rather than starting a blank one. That is what
+        makes "now double that" resolvable: the agent still holds the 42.
+        """
         started = time.perf_counter()
+
+        # Look up the session this thread has been using. A failure here must
+        # not sink the job — losing continuity degrades the answer, losing the
+        # job wastes the work entirely.
+        session_id: str | None = None
+        if job.slack.channel and job.slack.thread_ts:
+            try:
+                session_id = await get_thread_session(
+                    job.agent, job.slack.channel, job.slack.thread_ts
+                )
+            except Exception as exc:
+                log.warning("session.lookup_failed", job_id=str(job.job_id), error=str(exc))
+
         try:
             run = await self._runner(
                 job.prompt,
                 self._agent_cfg,
                 timeout_seconds=self._agent_cfg.job_timeout_seconds,
+                session_id=session_id,
             )
         except OpencodeError as exc:
             # A missing binary is a deployment fault, not a bad job.
@@ -245,6 +270,17 @@ class Worker:
                 error=str(exc),
                 duration_seconds=time.perf_counter() - started,
             )
+
+        # Remember the session for the next turn in this thread. Writing it
+        # every time also refreshes its TTL, so an active conversation does
+        # not expire mid-flow.
+        if run.session_id and job.slack.channel and job.slack.thread_ts:
+            try:
+                await set_thread_session(
+                    job.agent, job.slack.channel, job.slack.thread_ts, run.session_id
+                )
+            except Exception as exc:
+                log.warning("session.save_failed", job_id=str(job.job_id), error=str(exc))
 
         return JobResult(
             job_id=job.job_id,

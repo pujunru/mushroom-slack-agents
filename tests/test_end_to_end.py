@@ -38,6 +38,8 @@ class Pipeline:
         self.results: list[Any] = []
         self.replies: list[tuple[str, str, str | None]] = []
         self.acked: list[int] = []
+        self.turns: list[dict] = []
+        self.sessions: dict[str, str] = {}
         self._next_msg_id = 1
 
     # -- gateway side ---------------------------------------------------
@@ -116,9 +118,20 @@ def pipeline(monkeypatch: pytest.MonkeyPatch) -> Pipeline:
     monkeypatch.setattr(ingest_module, "store_event", store_event)
     monkeypatch.setattr(ingest_module, "set_event_status", set_event_status)
     monkeypatch.setattr(ingest_module, "record_job", record_job)
+    sessions: dict[str, str] = {}
+
+    async def get_session(agent, channel, thread_ts):
+        return sessions.get(f"{agent}:{channel}:{thread_ts}")
+
+    async def set_session(agent, channel, thread_ts, session_id):
+        sessions[f"{agent}:{channel}:{thread_ts}"] = session_id
+
     monkeypatch.setattr(worker_module, "mark_job_running", mark_running)
     monkeypatch.setattr(worker_module, "set_event_status", set_event_status)
     monkeypatch.setattr(worker_module, "complete_job", complete_job)
+    monkeypatch.setattr(worker_module, "get_thread_session", get_session)
+    monkeypatch.setattr(worker_module, "set_thread_session", set_session)
+    state.sessions = sessions
 
     return state
 
@@ -150,6 +163,7 @@ def build_worker(pipeline: Pipeline, *, output: str = "All done.", ok: bool = Tr
             self.exit_code = 0 if ok else 1
             self.stderr = "" if ok else "the agent failed"
             self.timed_out = False
+            self.session_id = "ses_e2e"
 
     async def runner(prompt: str, cfg, **_: Any):
         assert prompt, "the worker must pass a non-empty prompt to the agent"

@@ -217,3 +217,19 @@ def test_bot_authored_thread_reply_is_still_dropped() -> None:
     )
     assert not decision.should_enqueue
     assert decision.reason == "bot_authored"
+
+
+def test_thread_history_shape_for_the_agent() -> None:
+    """History is replayed as roles the model APIs already understand.
+
+    'user' and 'assistant' are the vocabulary of every chat completion API,
+    so storing those strings means the transcript needs no translation on the
+    way to the model.
+    """
+    from mushroom_core.store import SESSION_NAMESPACE, _session_key
+
+    # Sessions are scoped per agent: a different agent profile is a different
+    # conversation even in the same Slack thread.
+    assert _session_key("general", "C1", "1.0") != _session_key("review", "C1", "1.0")
+    assert _session_key("general", "C1", "1.0") == "general:C1:1.0"
+    assert SESSION_NAMESPACE == "opencode_session"

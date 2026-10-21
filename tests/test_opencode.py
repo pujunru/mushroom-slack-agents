@@ -264,3 +264,46 @@ async def test_stdin_is_closed_not_inherited(monkeypatch) -> None:
 
     assert captured["stdin"] is asyncio.subprocess.DEVNULL
     assert result.ok
+
+
+# --- session continuity ----------------------------------------------------
+
+
+def test_session_id_is_extracted_from_the_event_stream() -> None:
+    """opencode reports its session on every event; we need it to resume."""
+    import json
+
+    from mushroom_agent.opencode import extract_session_id, parse_json_events
+
+    stdout = "\n".join(
+        [
+            json.dumps({"type": "step_start", "sessionID": "ses_abc123"}),
+            json.dumps({"type": "text", "text": "hi", "sessionID": "ses_abc123"}),
+        ]
+    )
+    events, _ = parse_json_events(stdout)
+    assert extract_session_id(events) == "ses_abc123"
+
+
+def test_session_id_found_inside_a_part() -> None:
+    """Some events carry it only on the nested part."""
+    from mushroom_agent.opencode import extract_session_id
+
+    assert extract_session_id([{"part": {"sessionID": "ses_nested"}}]) == "ses_nested"
+
+
+def test_no_session_id_is_not_an_error() -> None:
+    from mushroom_agent.opencode import extract_session_id
+
+    assert extract_session_id([{"type": "text", "text": "x"}]) is None
+    assert extract_session_id([]) is None
+
+
+def test_resuming_passes_the_session_flag() -> None:
+    """A follow-up must continue the thread's conversation, not start one."""
+    cmd = build_command("follow up", cfg(), session_id="ses_prior")
+    assert cmd[cmd.index("--session") + 1] == "ses_prior"
+
+
+def test_first_turn_has_no_session_flag() -> None:
+    assert "--session" not in build_command("first", cfg())

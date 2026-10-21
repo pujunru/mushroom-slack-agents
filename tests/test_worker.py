@@ -66,13 +66,20 @@ class FakeRun:
     """Mimics an OpencodeResult."""
 
     def __init__(
-        self, *, ok: bool = True, text: str = "done", exit_code: int = 0, stderr: str = ""
+        self,
+        *,
+        ok: bool = True,
+        text: str = "done",
+        exit_code: int = 0,
+        stderr: str = "",
+        session_id: str | None = "ses_fake",
     ) -> None:
         self.ok = ok
         self.text = text
         self.exit_code = exit_code
         self.stderr = stderr
         self.timed_out = False
+        self.session_id = session_id
 
 
 def make_message(
@@ -114,9 +121,21 @@ def db_calls(monkeypatch: pytest.MonkeyPatch) -> dict[str, list]:
     async def set_status(event_id, status, *, conn=None):
         calls["event_status"].append((event_id, status))
 
+    # The session store talks to Postgres, which these tests do not have.
+    sessions: dict[str, str] = {}
+
+    async def get_session(agent, channel, thread_ts):
+        return sessions.get(f"{agent}:{channel}:{thread_ts}")
+
+    async def set_session(agent, channel, thread_ts, session_id):
+        sessions[f"{agent}:{channel}:{thread_ts}"] = session_id
+
     monkeypatch.setattr(worker_module, "mark_job_running", mark_running)
     monkeypatch.setattr(worker_module, "complete_job", complete)
     monkeypatch.setattr(worker_module, "set_event_status", set_status)
+    monkeypatch.setattr(worker_module, "get_thread_session", get_session)
+    monkeypatch.setattr(worker_module, "set_thread_session", set_session)
+    calls["sessions"] = sessions
     return calls
 
 

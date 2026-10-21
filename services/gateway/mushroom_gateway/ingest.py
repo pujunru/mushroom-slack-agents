@@ -28,6 +28,7 @@ from mushroom_core.queue import QueueClient
 from mushroom_core.router import RoutingDecision, route
 from mushroom_core.store import (
     record_job,
+    record_thread_message,
     set_event_status,
     store_event,
     thread_is_known,
@@ -119,6 +120,12 @@ async def ingest_event(
                 )
                 return IngestResult(duplicate=True, reason="duplicate")
 
+            # Record the turn before deciding what to do with it. A message
+            # that creates no job is still part of the conversation, and a
+            # transcript with gaps is worse than none — the agent would see
+            # replies to things it cannot read.
+            await _record_turn(envelope, conn=conn)
+
             if not decision.should_enqueue or decision.job is None:
                 await set_event_status(envelope.event_id, EventStatus.IGNORED, conn=conn)
                 EVENTS_IGNORED.labels(reason=decision.reason.split(":")[0]).inc()
@@ -151,3 +158,31 @@ async def ingest_event(
         msg_id=msg_id,
     )
     return IngestResult(enqueued=True, reason="ok", job_id=str(job.job_id), msg_id=msg_id)
+
+
+async def _record_turn(envelope: SlackEnvelope, *, conn: asyncpg.Connection) -> None:
+    """Append this message to its thread's history.
+
+    Best-effort: history is what makes a follow-up coherent, but failing to
+    record it must not stop the event being ingested and answered.
+    """
+    channel = envelope.channel
+    thread_ts = envelope.thread_ts
+    message_ts = envelope.event.get("ts")
+    text = envelope.text
+    if not (channel and thread_ts and message_ts and text):
+        return
+    try:
+        await record_thread_message(
+            channel=channel,
+            thread_ts=thread_ts,
+            # Our own messages arrive as events too; they are the assistant
+            # side of the transcript.
+            role="assistant" if envelope.is_bot_event else "user",
+            message_ts=str(message_ts),
+            text=text,
+            slack_user=envelope.user,
+            conn=conn,
+        )
+    except Exception:
+        log.warning("ingest.history_record_failed", event_id=envelope.event_id)

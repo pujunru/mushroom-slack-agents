@@ -45,6 +45,10 @@ class OpencodeResult:
     stderr: str = ""
     timed_out: bool = False
     events: list[dict] = field(default_factory=list)
+    # opencode's own session id, taken from the event stream. Storing it per
+    # Slack thread is what lets a follow-up continue the same conversation
+    # instead of starting a fresh one with no memory.
+    session_id: str | None = None
 
     @property
     def ok(self) -> bool:
@@ -77,6 +81,24 @@ def build_command(
         cmd += ["--session", session_id]
     cmd.append(prompt)
     return cmd
+
+
+def extract_session_id(events: list[dict]) -> str | None:
+    """Pull opencode's session id out of its event stream.
+
+    Every event carries `sessionID`, at the top level and again inside
+    `part`, so the first occurrence anywhere is enough.
+    """
+    for event in events:
+        sid = event.get("sessionID")
+        if isinstance(sid, str) and sid:
+            return sid
+        part = event.get("part")
+        if isinstance(part, dict):
+            sid = part.get("sessionID")
+            if isinstance(sid, str) and sid:
+                return sid
+    return None
 
 
 def parse_json_events(stdout: str) -> tuple[list[dict], str]:
@@ -251,6 +273,9 @@ async def run_opencode(
         stdout=stdout,
         stderr=stderr,
         events=events,
+        # Prefer the session we asked to resume; fall back to whatever
+        # opencode reports, which is how a brand-new session is discovered.
+        session_id=session_id or extract_session_id(events),
     )
 
 
