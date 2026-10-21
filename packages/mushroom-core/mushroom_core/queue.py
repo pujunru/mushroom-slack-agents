@@ -204,7 +204,15 @@ class QueueClient:
             # The third parameter is named `vt` in every overload; the
             # INTEGER form is an offset in seconds from now.
             await conn.execute(
-                "SELECT pgmq.set_vt(queue_name => $1, msg_id => $2::bigint, vt => $3::integer)",
+                # `SELECT * FROM`, not `SELECT pgmq.set_vt(...)`. set_vt
+                # returns SETOF pgmq.message_record, and asyncpg refuses a
+                # composite type in text mode:
+                #   cannot decode type "pgmq"."message_record"
+                # Selecting from it expands the record into ordinary scalar
+                # columns, which decode fine. The row itself is discarded —
+                # this call is made for its effect on the lease.
+                "SELECT * FROM pgmq.set_vt(queue_name => $1, "
+                "msg_id => $2::bigint, vt => $3::integer)",
                 target,
                 msg_id,
                 seconds,
