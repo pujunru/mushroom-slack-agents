@@ -163,9 +163,15 @@ def _subprocess_env(cfg: AgentConfig) -> dict[str, str]:
         # a provider-specific one, so a model change from openrouter/... to
         # anthropic/... also changes which variable must be set.
         env[cfg.model_api_key_env] = key
-    # Keep opencode's state inside the writable workspace so the image can
-    # run with a read-only root filesystem.
-    env.setdefault("HOME", cfg.workspace_root)
+    # Point HOME at the writable workspace, where the entrypoint wrote
+    # opencode's config.
+    #
+    # This is an unconditional override, not a setdefault. The container image
+    # creates its user with --no-create-home, so HOME is already set to a
+    # directory that does not exist — a setdefault silently keeps that value,
+    # opencode finds no config (including `permissions: autoaccept`), and the
+    # run hangs waiting for an approval prompt that can never be answered.
+    env["HOME"] = cfg.workspace_root
     return env
 
 
@@ -199,6 +205,13 @@ async def run_opencode(
 
     process = await asyncio.create_subprocess_exec(
         *cmd,
+        # stdin MUST be closed, not inherited. opencode keeps reading stdin
+        # after it has finished answering, so an inherited descriptor makes it
+        # hang forever — and because it has already written its output to the
+        # pipe, the symptom is a silent timeout with zero bytes on both
+        # streams rather than an error. This was the whole of a production
+        # hang; `opencode run ... </dev/null` returns in ~3s.
+        stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         cwd=workdir,

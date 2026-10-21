@@ -86,7 +86,7 @@ class AgentConfig(BaseConfig):
     # prefix selects the backend, so changing provider is a values change
     # rather than a code change.
     opencode_model: str = Field(
-        default="openrouter/anthropic/claude-sonnet-4.5",
+        default="openrouter/deepseek/deepseek-v4-flash-0731",
         description="opencode model string, e.g. openrouter/<vendor>/<model>",
     )
     # The credential opencode needs, and the environment variable it expects

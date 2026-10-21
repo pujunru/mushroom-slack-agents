@@ -17,7 +17,7 @@ from mushroom_core.config import AgentConfig
 def cfg(**kw) -> AgentConfig:
     defaults = {
         "opencode_binary": "opencode",
-        "opencode_model": "openrouter/anthropic/claude-sonnet-4.5",
+        "opencode_model": "openrouter/deepseek/deepseek-v4-flash-0731",
     }
     defaults.update(kw)
     return AgentConfig(**defaults)
@@ -36,7 +36,7 @@ def test_command_requests_json_output_and_model() -> None:
     cmd = build_command("hello", cfg())
     assert "--format" in cmd
     assert cmd[cmd.index("--format") + 1] == "json"
-    assert cmd[cmd.index("--model") + 1] == "openrouter/anthropic/claude-sonnet-4.5"
+    assert cmd[cmd.index("--model") + 1] == "openrouter/deepseek/deepseek-v4-flash-0731"
 
 
 def test_prompt_is_the_final_argv_element() -> None:
@@ -209,3 +209,58 @@ def test_no_credential_variable_when_unset() -> None:
 
     env = _subprocess_env(cfg())
     assert "OPENROUTER_API_KEY" not in env
+
+
+def test_home_is_overridden_not_defaulted() -> None:
+    """HOME must be forced to the workspace, even when already set.
+
+    The image creates its user with --no-create-home, so the container starts
+    with HOME pointing at a directory that does not exist. A setdefault keeps
+    that value, opencode then finds none of its config — including the
+    unattended approval mode — and the run hangs on a prompt nobody can
+    answer. This is what that looked like in production.
+    """
+    import os
+
+    from mushroom_agent.opencode import _subprocess_env
+
+    os.environ["HOME"] = "/home/does-not-exist"
+    try:
+        env = _subprocess_env(cfg(workspace_root="/workspace"))
+    finally:
+        os.environ.pop("HOME", None)
+    assert env["HOME"] == "/workspace"
+
+
+async def test_stdin_is_closed_not_inherited(monkeypatch) -> None:
+    """opencode must be spawned with stdin at DEVNULL.
+
+    It keeps reading stdin after answering, so an inherited descriptor hangs
+    the run forever. The output has already been written by then, so the
+    failure looks like a silent timeout with zero bytes on both streams — not
+    an error anyone can diagnose from the logs. This is what took a
+    production debugging session.
+    """
+    import asyncio
+
+    captured: dict = {}
+
+    class FakeProcess:
+        returncode = 0
+
+        async def communicate(self):
+            return b'{"type":"text","text":"ok"}', b""
+
+    async def fake_exec(*args, **kwargs):
+        captured.update(kwargs)
+        return FakeProcess()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setattr("shutil.which", lambda _: "/usr/bin/opencode")
+
+    from mushroom_agent.opencode import run_opencode
+
+    result = await run_opencode("hi", cfg())
+
+    assert captured["stdin"] is asyncio.subprocess.DEVNULL
+    assert result.ok
