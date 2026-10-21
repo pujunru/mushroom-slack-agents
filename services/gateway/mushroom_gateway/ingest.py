@@ -26,7 +26,12 @@ from mushroom_core.logging import get_logger
 from mushroom_core.models import EventStatus, SlackEnvelope
 from mushroom_core.queue import QueueClient
 from mushroom_core.router import RoutingDecision, route
-from mushroom_core.store import record_job, set_event_status, store_event
+from mushroom_core.store import (
+    record_job,
+    set_event_status,
+    store_event,
+    thread_is_known,
+)
 
 from .metrics import (
     EVENTS_DUPLICATE,
@@ -80,7 +85,25 @@ async def ingest_event(
     `duplicate` and does nothing else.
     """
     EVENTS_RECEIVED.labels(event_type=envelope.event_type).inc()
-    decision: RoutingDecision = route(envelope, allowed_agents=allowed_agents)
+
+    # A plain `message` only counts when it continues a thread we have
+    # already worked in; see router.route. The lookup needs the database, so
+    # it happens here rather than inside the pure routing function. A failure
+    # is treated as "unknown thread", which errs toward staying quiet.
+    in_known_thread = False
+    if envelope.event_type == "message" and envelope.channel and envelope.thread_ts:
+        try:
+            in_known_thread = await thread_is_known(envelope.channel, envelope.thread_ts)
+        except Exception:
+            log.warning(
+                "ingest.thread_lookup_failed",
+                event_id=envelope.event_id,
+                channel=envelope.channel,
+            )
+
+    decision: RoutingDecision = route(
+        envelope, allowed_agents=allowed_agents, in_known_thread=in_known_thread
+    )
 
     try:
         async with transaction() as conn:

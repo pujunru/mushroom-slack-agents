@@ -296,7 +296,7 @@ class Worker:
             replier = self._replier or SlackReplier(
                 slack_config().slack_bot_token.get_secret_value()
             )
-        except Exception as exc:  # noqa: BLE001 - a reply must never fail a job
+        except Exception as exc:
             # The job is done and recorded by this point. Failing to build the
             # Slack client is a notification problem, not a reason to crash
             # the worker loop and redeliver expensive agent work.

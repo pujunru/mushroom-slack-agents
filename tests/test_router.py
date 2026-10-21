@@ -144,3 +144,76 @@ def test_thread_ts_prefers_thread_root_over_message_ts() -> None:
     )
     assert decision.job is not None
     assert decision.job.slack.thread_ts == "1.0"
+
+
+# --- thread-aware follow-ups ----------------------------------------------
+
+
+def test_app_mention_never_needs_a_known_thread() -> None:
+    """An explicit mention is always ours, thread or not."""
+    decision = route(
+        envelope(type="app_mention", text="<@U0BOT> do it", channel="C1", ts="1.0"),
+        in_known_thread=False,
+    )
+    assert decision.should_enqueue
+
+
+def test_plain_message_outside_a_thread_is_ignored() -> None:
+    """Ordinary channel chatter must not become a job.
+
+    Subscribing to message.channels means Slack delivers every message in
+    every channel the bot is in. Without this check the agent would answer
+    all of it — one model call per message.
+    """
+    decision = route(
+        envelope(type="message", text="just talking to a colleague", channel="C1", ts="2.0"),
+        in_known_thread=True,
+    )
+    assert not decision.should_enqueue
+    assert decision.reason == "message_not_in_thread"
+
+
+def test_plain_message_in_an_unknown_thread_is_ignored() -> None:
+    """A thread the bot has never worked in is somebody else's conversation."""
+    decision = route(
+        envelope(type="message", text="follow up", channel="C1", ts="2.0", thread_ts="1.0"),
+        in_known_thread=False,
+    )
+    assert not decision.should_enqueue
+    assert decision.reason == "message_in_unknown_thread"
+
+
+def test_plain_message_in_a_known_thread_becomes_a_job() -> None:
+    """The point of the feature: a follow-up needs no second @-mention."""
+    decision = route(
+        envelope(
+            type="message", text="can you print the pwd?", channel="C1", ts="2.0", thread_ts="1.0"
+        ),
+        in_known_thread=True,
+    )
+    assert decision.should_enqueue
+    assert decision.job is not None
+    assert decision.job.prompt == "can you print the pwd?"
+    # The reply must stay in the same thread.
+    assert decision.job.slack.thread_ts == "1.0"
+
+
+def test_bot_authored_thread_reply_is_still_dropped() -> None:
+    """The loop guard outranks the thread rule.
+
+    Mushroom's own replies land in a thread it is known to work in, so
+    without the bot check first, every answer would trigger another job.
+    """
+    decision = route(
+        envelope(
+            type="message",
+            text="my own reply",
+            channel="C1",
+            ts="3.0",
+            thread_ts="1.0",
+            bot_id="B1",
+        ),
+        in_known_thread=True,
+    )
+    assert not decision.should_enqueue
+    assert decision.reason == "bot_authored"

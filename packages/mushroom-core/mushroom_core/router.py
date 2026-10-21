@@ -82,8 +82,14 @@ def route(
     envelope: SlackEnvelope,
     *,
     allowed_agents: frozenset[str] | None = None,
+    in_known_thread: bool = False,
 ) -> RoutingDecision:
     """Decide the fate of one Slack delivery.
+
+    `in_known_thread` says whether this message continues a thread the bot has
+    already participated in. The caller determines it, because answering it
+    needs the event store. It only affects plain `message` events; an
+    `app_mention` is always ours.
 
     The order of these checks is deliberate: the bot-authored check comes
     first, because an agent replying in a channel it also watches would
@@ -102,6 +108,23 @@ def route(
     subtype = envelope.event_subtype
     if event_type == "message" and subtype in IGNORED_MESSAGE_SUBTYPES:
         return RoutingDecision(False, f"ignored_subtype:{subtype}")
+
+    # A plain `message` is only ours when it continues a thread we are already
+    # part of. Subscribing to message.channels means Slack delivers *every*
+    # message in every channel the bot is in, so without this the agent would
+    # answer all channel chatter — a model call per message, and a bot that
+    # interrupts conversations it was not invited into.
+    #
+    # `in_known_thread` is supplied by the caller, which looks up whether we
+    # have handled this thread before. It is None when the caller could not
+    # determine it, which is treated as "not ours" so a lookup failure stays
+    # quiet rather than becoming noisy.
+    if event_type == "message":
+        if not envelope.event.get("thread_ts"):
+            # Not a threaded message at all: a top-level channel post.
+            return RoutingDecision(False, "message_not_in_thread")
+        if not in_known_thread:
+            return RoutingDecision(False, "message_in_unknown_thread")
 
     text = clean_prompt(envelope.text)
     agent, remainder = extract_agent(text)

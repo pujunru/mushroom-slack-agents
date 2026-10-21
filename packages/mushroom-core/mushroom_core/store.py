@@ -93,6 +93,49 @@ async def get_event(event_id: str) -> SlackEnvelope | None:
     return SlackEnvelope.model_validate(row["payload"])
 
 
+async def thread_is_known(
+    channel: str,
+    thread_ts: str,
+    *,
+    conn: asyncpg.Connection | None = None,
+) -> bool:
+    """Has the bot already produced work in this thread?
+
+    True when some earlier event in the same channel and thread was turned
+    into a job. That is what distinguishes "a follow-up to something we
+    answered" from "ordinary chatter in a channel we happen to be in".
+
+    Matching on `thread_ts` alone is not enough: a thread's root message
+    carries its own `ts` as the thread id, so the root is found by either
+    column.
+    """
+
+    async def _run(c: asyncpg.Connection) -> bool:
+        return bool(
+            await c.fetchval(
+                """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM slack_events e
+                    JOIN jobs j ON j.event_id = e.event_id
+                    WHERE e.channel = $1
+                      AND (
+                            e.thread_ts = $2
+                            OR e.payload->'event'->>'ts' = $2
+                          )
+                )
+                """,
+                channel,
+                thread_ts,
+            )
+        )
+
+    if conn is not None:
+        return await _run(conn)
+    async with acquire() as c:
+        return await _run(c)
+
+
 async def recent_events(limit: int = 50) -> list[dict[str, Any]]:
     async with acquire() as c:
         rows = await c.fetch(
