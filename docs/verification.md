@@ -86,6 +86,22 @@ dead-lettering, the archive table, all eight metrics columns, the delayed-send
 cast, and that a transactional enqueue rolls back with its caller. **Run it
 first.** If a signature is wrong, it fails there rather than in production.
 
+It earns its keep. On its first run in CI it caught a real defect that every
+other layer had missed:
+
+```
+asyncpg.exceptions._base.UnsupportedClientFeatureError:
+cannot decode type "pgmq"."message_record":
+text encoding of composite types is not supported
+```
+
+`pgmq.set_vt` returns `SETOF pgmq.message_record`, so calling it as a scalar
+hands asyncpg a whole composite type, which it will not decode in text mode.
+`SELECT * FROM pgmq.set_vt(...)` expands it into ordinary columns. The call is
+the lease heartbeat, so the consequence was real — a long job would have
+failed to extend its lease and been redelivered to a second worker — and it
+had never fired in production only because no job had yet run long enough.
+
 ### The dual pgmq install path
 
 `db/migrations/0002_pgmq.sql` gates on the `pgmq` *schema* rather than the
