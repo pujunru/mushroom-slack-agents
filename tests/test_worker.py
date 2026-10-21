@@ -365,3 +365,62 @@ async def test_heartbeat_tolerates_two_consecutive_failures() -> None:
     # After a successful beat at t, two failures mean the next attempt is at
     # 3 * interval. It must land strictly before the lease expires at vt.
     assert 3 * interval < vt, "two missed heartbeats must not lose the lease"
+
+
+# --- reply shape -----------------------------------------------------------
+
+
+async def test_reply_goes_into_the_thread(db_calls) -> None:
+    """A reply must land in the thread, not as a new channel message."""
+    queue = FakeQueue()
+    replier = FakeReplier()
+    worker = build_worker(queue, replier=replier)
+
+    await worker.handle_message(
+        make_message(job=make_job(slack=SlackContext(channel="C1", thread_ts="1700.5")))
+    )
+
+    assert replier.posts[0]["thread_ts"] == "1700.5"
+
+
+async def test_reply_does_not_mention_the_bot(db_calls) -> None:
+    """Nothing in the reply path adds an @-mention.
+
+    Re-mentioning would be noisy, and worse: a message the bot authors that
+    mentions the bot is the shape of a self-reply loop. The router's
+    bot-authored guard stops it, but not emitting one is the first defence.
+    """
+    queue = FakeQueue()
+    replier = FakeReplier()
+
+    async def runner(prompt, cfg, **kw):
+        return FakeRun(text="Here is the summary you asked for.")
+
+    worker = build_worker(queue, runner=runner, replier=replier)
+    await worker.handle_message(make_message())
+
+    assert "<@" not in replier.posts[0]["text"]
+
+
+async def test_reply_failure_does_not_crash_the_worker(db_calls, monkeypatch) -> None:
+    """A broken Slack client must not take the worker loop down.
+
+    The agent run has already succeeded and been recorded by the time the
+    reply is attempted, so a notification failure must never redeliver
+    expensive work. A missing aiohttp dependency did exactly this in
+    production: the loop crashed after every successful job.
+    """
+    queue = FakeQueue()
+    from mushroom_agent import worker as worker_module
+
+    def exploding_replier(_token):
+        raise ModuleNotFoundError("No module named 'aiohttp'")
+
+    monkeypatch.setattr(worker_module, "SlackReplier", exploding_replier)
+
+    worker = build_worker(queue, replier=None)
+    await worker.handle_message(make_message())
+
+    # The job still completed and was acked.
+    assert queue.deleted == [1]
+    assert db_calls["complete"][0].status is JobStatus.SUCCEEDED

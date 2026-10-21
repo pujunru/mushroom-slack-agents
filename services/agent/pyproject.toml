@@ -10,7 +10,12 @@ requires-python = ">=3.12"
 license = { text = "MIT" }
 dependencies = [
     "mushroom-core",
-    "slack-sdk>=3.33",
+    # The async web client needs aiohttp, which slack-sdk treats as an
+    # optional extra. Without it `from slack_sdk.web.async_client import
+    # AsyncWebClient` raises ModuleNotFoundError at runtime — long after the
+    # image builds cleanly.
+    "slack-sdk[optional]>=3.33",
+    "aiohttp>=3.10",
     "prometheus-client>=0.21",
 ]
 

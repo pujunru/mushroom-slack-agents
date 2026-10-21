@@ -32,10 +32,23 @@ class SlackReplier:
     def __init__(self, bot_token: str) -> None:
         self._token = bot_token
         self._client = None
-        if bot_token:
+        if not bot_token:
+            return
+        try:
             from slack_sdk.web.async_client import AsyncWebClient
-
-            self._client = AsyncWebClient(token=bot_token)
+        except ImportError as exc:
+            # The async client needs aiohttp, an optional slack-sdk extra. A
+            # missing dependency must degrade to "cannot reply" rather than
+            # crash the worker loop: the agent run already succeeded and is
+            # recorded, so taking the worker down would turn a notification
+            # problem into an outage.
+            log.error(
+                "slack.client.unavailable",
+                error=str(exc),
+                detail="install slack-sdk[optional] or aiohttp to enable replies",
+            )
+            return
+        self._client = AsyncWebClient(token=bot_token)
 
     @property
     def enabled(self) -> bool:

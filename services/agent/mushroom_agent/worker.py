@@ -292,7 +292,16 @@ class Worker:
         """Post the outcome back to the originating thread."""
         if not self._agent_cfg.reply_to_slack or not job.slack.channel:
             return
-        replier = self._replier or SlackReplier(slack_config().slack_bot_token.get_secret_value())
+        try:
+            replier = self._replier or SlackReplier(
+                slack_config().slack_bot_token.get_secret_value()
+            )
+        except Exception as exc:  # noqa: BLE001 - a reply must never fail a job
+            # The job is done and recorded by this point. Failing to build the
+            # Slack client is a notification problem, not a reason to crash
+            # the worker loop and redeliver expensive agent work.
+            log.warning("slack.replier.unavailable", error=str(exc))
+            return
         if result.status is JobStatus.SUCCEEDED:
             body = result.output
         else:
