@@ -151,12 +151,27 @@ The companion environment repo's `scripts/selftest.sh` runs these render
 assertions against every cluster overlay, so a values file that breaks one of
 the invariants fails before it is ever deployed.
 
-### The container images
+### The container images — now built and running
 
-Neither Dockerfile was built. The pinned `@opencode/cli@2.1.1` version and the
-`--standalone` flag come from opencode v2's documentation; note that
-`ghcr.io/anomalyco/opencode:latest` still serves the v1 line, which is why the
-agent image installs a pinned npm package rather than using that base.
+All three images build on a real host and run in a real cluster (verified
+2026-10-20 on a kubeadm cluster, Kubernetes v1.37.1):
+
+| Image | Size |
+|---|---|
+| `mushroom-gateway` | 283 MB |
+| `mushroom-migrate` | 230 MB |
+| `mushroom-agent` | 1.98 GB (Node + opencode v2) |
+
+The gateway starts, opens its connection pool, ensures both pgmq queues exist
+and serves on `0.0.0.0:8080`. The migration job applies `0001_init.sql` and
+`0002_pgmq.sql` and exits cleanly. The database ends up with all four tables,
+pgmq 1.13.1 as an extension, and both queues with their `q_`/`a_` tables.
+
+The pinned `@opencode/cli@2.1.1` version and the `--standalone` flag come from
+opencode v2's documentation; note that `ghcr.io/anomalyco/opencode:latest`
+still serves the v1 line, which is why the agent image installs a pinned npm
+package rather than using that base. What remains unverified is a real model
+call, which needs an API key.
 
 ## Validation against a live cluster
 
