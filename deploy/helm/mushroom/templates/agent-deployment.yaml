@@ -28,6 +28,9 @@ spec:
         app.kubernetes.io/component: agent
       annotations:
         checksum/secret-provider: {{ .Values.secrets.provider | sha256sum }}
+        # Editing the prompt must restart the pods; a ConfigMap change alone
+        # does not, and a subPath mount never updates in place.
+        checksum/agent-prompt: {{ .Values.agent.systemPrompt | default "" | sha256sum }}
         {{- with .Values.agent.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -108,12 +111,26 @@ spec:
               mountPath: /workspace
             - name: tmp
               mountPath: /tmp
+            {{- if .Values.agent.systemPrompt }}
+            # opencode reads instructions from AGENTS.md in its working
+            # directory. subPath mounts the single file rather than shadowing
+            # the whole workspace, which opencode also needs to write to.
+            - name: agent-prompt
+              mountPath: /workspace/AGENTS.md
+              subPath: AGENTS.md
+              readOnly: true
+            {{- end }}
       volumes:
         - name: workspace
           emptyDir:
             sizeLimit: {{ .Values.agent.workspace.sizeLimit }}
         - name: tmp
           emptyDir: {}
+        {{- if .Values.agent.systemPrompt }}
+        - name: agent-prompt
+          configMap:
+            name: {{ include "mushroom.fullname" . }}-agent-prompt
+        {{- end }}
       {{- with .Values.agent.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

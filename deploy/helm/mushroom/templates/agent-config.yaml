@@ -1,0 +1,21 @@
+{{- if .Values.agent.systemPrompt }}
+{{/*
+The agent's system prompt.
+
+opencode reads instructions from AGENTS.md in its working directory, so this
+ConfigMap is mounted there. Keeping it in values rather than the image means
+changing the agent's behaviour is a `helm upgrade`, not a rebuild and a
+registry push — which matters, because the prompt is the thing you actually
+want to iterate on.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mushroom.fullname" . }}-agent-prompt
+  labels:
+    {{- include "mushroom.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agent
+data:
+  AGENTS.md: |
+    {{- .Values.agent.systemPrompt | nindent 4 }}
+{{- end }}

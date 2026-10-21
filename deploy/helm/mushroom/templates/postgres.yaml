@@ -79,6 +79,25 @@ spec:
         {{- include "mushroom.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: postgresql
     spec:
+      {{- with .Values.postgresql.runtimeClassName }}
+      # Which container runtime runs the database.
+      #
+      # This matters on any cluster whose default runtime is a microVM
+      # (Kata with Firecracker, for instance). Firecracker cannot share a
+      # host directory with the guest, so Kata copies the volume's contents
+      # into a RAM disk inside the VM at startup. Everything looks correct —
+      # the PVC binds, the pod mounts it, no errors anywhere — and the data
+      # is silently discarded when the pod stops.
+      #
+      # Verified on such a cluster: under the microVM runtime the data
+      # directory is `tmpfs` and the host directory stays empty; under runc
+      # it is the real filesystem and writes land on disk.
+      #
+      # A hypervisor that can share directories (QEMU or Cloud Hypervisor
+      # with virtio-fs) also works, if you want VM isolation for the
+      # database.
+      runtimeClassName: {{ . }}
+      {{- end }}
       securityContext:
         # Deliberately no runAsUser/runAsNonRoot/fsGroup here.
         #

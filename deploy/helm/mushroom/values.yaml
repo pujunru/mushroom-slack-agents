@@ -87,6 +87,42 @@ agent:
   # provider-specific, so it must match `model` above.
   modelApiKeyEnv: "OPENROUTER_API_KEY"
   replyToSlack: true
+  # The agent's system prompt, written to AGENTS.md in its working directory,
+  # which is where opencode reads instructions from.
+  #
+  # This is the knob you will reach for most: it is what makes the bot yours
+  # rather than a generic assistant. Changing it is a `helm upgrade`, not an
+  # image rebuild, and the pods restart automatically because the deployment
+  # carries a checksum of this value.
+  #
+  # Set it to "" to ship no AGENTS.md and let opencode use its own defaults.
+  #
+  # Two things worth saying in any prompt here, both reflected below: replies
+  # land in Slack, so brevity and Slack's own markdown matter; and the agent
+  # runs unattended with auto-accepted permissions, so it should say what it
+  # cannot do rather than guess.
+  systemPrompt: |
+    # Mushroom
+
+    You are a helpful agent answering questions in Slack.
+
+    ## Replies
+
+    - Answer in **two or three sentences** unless asked for more. Slack is a
+      chat window, not a document.
+    - Use Slack markdown: `*bold*`, `_italic_`, `` `code` ``, and fenced
+      blocks for anything multi-line.
+    - When someone asks for a specific format ("just the number"), give
+      exactly that and nothing else.
+    - Do not greet, sign off, or restate the question.
+
+    ## Honesty
+
+    - If you do not know, say so plainly. Do not invent commands, file paths,
+      URLs, or API details.
+    - If a request needs access you do not have, say what is missing rather
+      than guessing at an answer.
+    - You run unattended, so nobody is watching to catch a confident mistake.
   resources:
     requests:
       cpu: 250m
@@ -192,6 +228,17 @@ postgresql:
     size: 20Gi
     # Empty uses the cluster's default StorageClass.
     storageClass: ""
+  # RuntimeClass for the database pod. Empty uses the cluster default.
+  #
+  # Set this to a non-VM runtime (usually "runc") if your cluster defaults to
+  # a microVM runtime such as Kata with Firecracker. Firecracker cannot share
+  # a host directory with the guest, so the volume is copied into VM RAM and
+  # every write is lost when the pod stops — with no error anywhere to say so.
+  #
+  # Symptom: the data directory shows as `tmpfs` inside the pod while the
+  # PVC's host directory stays empty. Check with:
+  #   kubectl -n <ns> exec <pg-pod> -- grep postgresql /proc/mounts
+  runtimeClassName: ""
   # Pod securityContext for Postgres. Empty by default so the official
   # entrypoint can start as root, chown its data directory and then drop to
   # the postgres user itself — which is what works on storage that ignores

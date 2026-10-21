@@ -188,6 +188,22 @@ The ones that matter most:
 | `JOB_TIMEOUT_SECONDS` | `600` | Hard ceiling on one agent run. |
 | `MAX_DELIVERY_ATTEMPTS` | `5` | Then dead-lettered. |
 
+## Telling the agent what it is
+
+`agent.systemPrompt` in the chart's values is written to `AGENTS.md`, which is
+where opencode reads its instructions. It ships with a sensible default for
+Slack — brief replies, Slack markdown, say-so-when-unsure — and changing it is
+a `helm upgrade`, not an image rebuild:
+
+```yaml
+agent:
+  systemPrompt: |
+    You answer questions for the platform team.
+    Prefer two or three sentences.
+```
+
+See [docs/models.md](docs/models.md#the-system-prompt).
+
 ## Choosing a model provider
 
 OpenRouter by default, but the provider is configuration rather than code —

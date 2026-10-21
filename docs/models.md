@@ -72,6 +72,41 @@ agent:
 
 Then set `MODEL_API_KEY` to that provider's key. Nothing else changes.
 
+## The system prompt
+
+What the agent is told about itself lives in `agent.systemPrompt`:
+
+```yaml
+agent:
+  systemPrompt: |
+    # Mushroom
+    You answer questions for the platform team in Slack.
+    Prefer two or three sentences. Say so when you do not know.
+```
+
+It is written to `AGENTS.md` in the agent's working directory, which is where
+opencode reads instructions from. Changing it is a `helm upgrade` rather than
+an image rebuild, and the pods restart automatically — the deployment carries
+a checksum of the value, without which a ConfigMap edit would leave the old
+pods running with the old prompt.
+
+Set it to `""` to ship no `AGENTS.md` and let opencode use its own defaults.
+
+Two things worth covering in any prompt you write, both in the shipped
+default:
+
+- **Replies go to Slack.** Ask for brevity and Slack's markdown (`*bold*`,
+  not `**bold**`), or you get essays formatted for a web page.
+- **The agent runs unattended** with auto-accepted permissions. Tell it to say
+  what it cannot do rather than guess, because nobody is watching to catch a
+  confident mistake.
+
+### Per-agent prompts
+
+`agent.systemPrompt` applies to every agent. A `!review` directive routes to a
+different agent profile but currently shares this prompt; per-profile prompts
+would mean one ConfigMap key per agent and a deployment per profile.
+
 ## Operational notes for OpenRouter
 
 Things that differ from a direct provider account, worth knowing before the
