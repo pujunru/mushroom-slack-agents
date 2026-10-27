@@ -121,3 +121,35 @@ would restart the database on each deploy.
 "helm.sh/hook-weight": "-8"
 "helm.sh/resource-policy": keep
 {{- end }}
+
+{{/*
+Flatten agent.skills into a JSON list of {key, path, content}.
+
+A skill is either a string (the SKILL.md body) or a map of relative path to
+file content, which lets a skill carry scripts and references beside its
+SKILL.md. `key` is the ConfigMap key and `path` is where the file lands under
+the custom skills directory.
+*/}}
+{{- define "mushroom.agentSkillFiles" -}}
+{{- $files := list }}
+{{- range $name, $skill := .Values.agent.skills }}
+{{- if not (regexMatch "^[a-z0-9]+(-[a-z0-9]+)*$" $name) }}
+{{- fail (printf "agent.skills: %q is not a valid skill name (lowercase letters, digits and single hyphens)" $name) }}
+{{- end }}
+{{- $tree := $skill }}
+{{- if kindIs "string" $skill }}
+{{- $tree = dict "SKILL.md" $skill }}
+{{- end }}
+{{- if not (hasKey $tree "SKILL.md") }}
+{{- fail (printf "agent.skills.%s: a skill given as a map must include SKILL.md" $name) }}
+{{- end }}
+{{- range $path, $content := $tree }}
+{{- if or (hasPrefix "/" $path) (contains ".." $path) }}
+{{- fail (printf "agent.skills.%s: %q must be a relative path inside the skill" $name $path) }}
+{{- end }}
+{{- $key := printf "%s--%s" $name ($path | replace "/" "--") }}
+{{- $files = append $files (dict "key" $key "path" (printf "%s/%s" $name $path) "content" $content) }}
+{{- end }}
+{{- end }}
+{{- toJson $files }}
+{{- end }}

@@ -149,9 +149,9 @@ services/agent/             queue consumer + opencode runner
 db/migrations/              SQL migrations, applied by a Helm hook
 deploy/helm/mushroom/       the chart
 deploy/local/               docker-compose dev stack
-images/                     Dockerfiles and the agent's opencode config
+images/                     Dockerfiles, the agent's opencode config and builtin skills
 scripts/                    dev helpers, migrations, Vault bootstrap
-docs/                       architecture, deployment, Postgres, Slack setup
+docs/                       architecture, deployment, Postgres, Slack setup, skills
 ```
 
 ## Development
@@ -203,6 +203,26 @@ agent:
 ```
 
 See [docs/models.md](docs/models.md#the-system-prompt).
+
+## Giving the agent skills
+
+Longer, task-specific instructions — runbooks, release processes, how to query
+an internal system — belong in opencode skills rather than the system prompt.
+The agent loads a skill only when a request matches its description. Add them
+in the chart's values, with optional supporting files:
+
+```yaml
+agent:
+  skills:
+    release-notes: |
+      ---
+      description: Draft release notes from merged PRs. Use when asked what shipped.
+      ---
+      List PRs merged since the last tag, grouped by area, as Slack bullets.
+```
+
+Skills can also be baked into the image under `images/agent/skills/`. See
+[docs/skills.md](docs/skills.md).
 
 ## Choosing a model provider
 

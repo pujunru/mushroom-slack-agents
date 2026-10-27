@@ -1,0 +1,23 @@
+{{- if .Values.agent.skills }}
+{{/*
+Deployment-specific opencode skills.
+
+Each entry in agent.skills becomes a directory under
+/etc/mushroom/skills/custom/<name>/ in the agent pod, which opencode discovers
+through the skills source in its opencode.json. ConfigMap keys cannot contain
+"/", so files are stored under flattened keys and laid back out by the
+deployment's `items` list (see mushroom.agentSkillFiles).
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mushroom.fullname" . }}-agent-skills
+  labels:
+    {{- include "mushroom.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agent
+data:
+  {{- range $f := include "mushroom.agentSkillFiles" . | fromJsonArray }}
+  {{ $f.key }}: |
+    {{- $f.content | nindent 4 }}
+  {{- end }}
+{{- end }}

@@ -1,4 +1,5 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "model": "{env:OPENCODE_MODEL}"
+  "model": "{env:OPENCODE_MODEL}",
+  "skills": ["/etc/mushroom/skills"]
 }

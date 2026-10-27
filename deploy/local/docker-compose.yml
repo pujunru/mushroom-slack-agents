@@ -116,6 +116,10 @@ services:
       VISIBILITY_TIMEOUT_SECONDS: "900"
     volumes:
       - agent-workspace:/workspace
+      # Local skills, the compose equivalent of the chart's agent.skills.
+      # One directory per skill, each with a SKILL.md. Point SKILLS_DIR
+      # elsewhere to try a skills repo without copying it in.
+      - ${SKILLS_DIR:-./skills}:/etc/mushroom/skills/custom:ro
     depends_on:
       postgres:
         condition: service_healthy

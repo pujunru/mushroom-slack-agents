@@ -189,6 +189,23 @@ still serves the v1 line, which is why the agent image installs a pinned npm
 package rather than using that base. What remains unverified is a real model
 call, which needs an API key.
 
+### Skills — discovered, not yet exercised by a model
+
+Verified 2026-10-21 against the built agent image (`@opencode/cli@2.1.1`) with
+skill directories mounted at `/etc/mushroom/skills/custom`: opencode accepts
+the `skills` entry in `opencode.json` and lists each mounted skill under its
+directory name, alongside its own bundled `opencode` and `report` skills. The
+chart's `agent.skills` rendering — the flattened ConfigMap keys, the `items`
+that lay them back out, and the validation failures — was checked with
+`helm template`.
+
+opencode scans skill sources asynchronously after its server boots, so a
+`GET /api/skill` issued in the first moments returns an empty list. What
+remains unverified is whether a short `opencode run --standalone` always
+finishes that scan before the model is shown the skill list, and that the
+model then loads a matching skill. Both need a real model call. See
+[skills.md](skills.md#checking-what-the-agent-sees).
+
 ## Validation against a live cluster
 
 Everything above runs without a cluster. A deployed instance is validated

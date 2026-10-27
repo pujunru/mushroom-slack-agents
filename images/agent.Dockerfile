@@ -53,8 +53,14 @@ COPY db/migrations /app/db/migrations
 COPY images/agent/cli.json /etc/mushroom/opencode-cli.json
 COPY images/agent/opencode.json /etc/mushroom/opencode.json
 COPY images/agent/entrypoint.sh /usr/local/bin/entrypoint.sh
+# Skills opencode loads on demand. opencode.json lists /etc/mushroom/skills as
+# a source; builtin/ ships with the image and custom/ is where the chart (or
+# compose) mounts deployment-specific skills. Both live under one source so a
+# missing mount never leaves opencode pointing at a nonexistent directory.
+COPY images/agent/skills /etc/mushroom/skills/builtin
 
 RUN chmod +x /usr/local/bin/entrypoint.sh \
+ && mkdir -p /etc/mushroom/skills/custom \
  # The workspace is the agent's scratch space and opencode's HOME, so it must
  # be writable even with a read-only root filesystem (mount an emptyDir here).
  && mkdir -p /workspace \

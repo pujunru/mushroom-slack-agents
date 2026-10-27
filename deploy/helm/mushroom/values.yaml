@@ -123,6 +123,34 @@ agent:
     - If a request needs access you do not have, say what is missing rather
       than guessing at an answer.
     - You run unattended, so nobody is watching to catch a confident mistake.
+  # opencode skills: instructions the agent loads on demand when a request
+  # matches a skill's description, rather than carrying them in every prompt.
+  # Each key is a skill name (lowercase, digits, hyphens) and becomes
+  # /etc/mushroom/skills/custom/<name>/ in the pod. The value is either the
+  # SKILL.md text, or a map of relative path to content when the skill needs
+  # supporting files. Mounted files are read-only and not executable, so have
+  # SKILL.md run scripts as `sh scripts/x.sh` rather than `./scripts/x.sh`.
+  #
+  # Skills baked into the image (images/agent/skills/) load alongside these.
+  # See docs/skills.md.
+  #
+  #   skills:
+  #     release-notes: |
+  #       ---
+  #       name: release-notes
+  #       description: Draft release notes from merged PRs. Use when asked what shipped.
+  #       ---
+  #       List merged PRs since the last tag, group them by area, ...
+  #     incident-triage:
+  #       SKILL.md: |
+  #         ---
+  #         description: Triage a production alert. Use when someone pastes an alert.
+  #         ---
+  #         Run `sh scripts/recent-deploys.sh` first, then ...
+  #       scripts/recent-deploys.sh: |
+  #         #!/bin/sh
+  #         ...
+  skills: {}
   resources:
     requests:
       cpu: 250m

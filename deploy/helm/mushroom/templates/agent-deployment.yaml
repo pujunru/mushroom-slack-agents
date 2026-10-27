@@ -31,6 +31,10 @@ spec:
         # Editing the prompt must restart the pods; a ConfigMap change alone
         # does not, and a subPath mount never updates in place.
         checksum/agent-prompt: {{ .Values.agent.systemPrompt | default "" | sha256sum }}
+        # Same for skills. The skills mount is not a subPath, so the kubelet
+        # does refresh it eventually, but rolling the pods means every replica
+        # switches to the new set at a known moment.
+        checksum/agent-skills: {{ .Values.agent.skills | toJson | sha256sum }}
         {{- with .Values.agent.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -120,6 +124,13 @@ spec:
               subPath: AGENTS.md
               readOnly: true
             {{- end }}
+            {{- if .Values.agent.skills }}
+            # Deployment-specific skills, beside the image's builtin/ ones
+            # under the single skills source named in opencode.json.
+            - name: agent-skills
+              mountPath: /etc/mushroom/skills/custom
+              readOnly: true
+            {{- end }}
       volumes:
         - name: workspace
           emptyDir:
@@ -130,6 +141,16 @@ spec:
         - name: agent-prompt
           configMap:
             name: {{ include "mushroom.fullname" . }}-agent-prompt
+        {{- end }}
+        {{- if .Values.agent.skills }}
+        - name: agent-skills
+          configMap:
+            name: {{ include "mushroom.fullname" . }}-agent-skills
+            items:
+              {{- range $f := include "mushroom.agentSkillFiles" . | fromJsonArray }}
+              - key: {{ $f.key }}
+                path: {{ $f.path }}
+              {{- end }}
         {{- end }}
       {{- with .Values.agent.nodeSelector }}
       nodeSelector:

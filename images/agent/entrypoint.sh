@@ -11,8 +11,8 @@ export HOME="${WORKSPACE_ROOT}"
 
 mkdir -p "${HOME}/.config/opencode"
 
-# cli.json carries the unattended approval mode; opencode.json carries only
-# the model selection. Both are baked into the image and copied rather than
+# cli.json carries the unattended approval mode; opencode.json carries the
+# model selection and the skills source (/etc/mushroom/skills). Both are baked into the image and copied rather than
 # symlinked so opencode can write sibling state next to them.
 #
 # opencode.json deliberately has no `providers` block. opencode v2's
